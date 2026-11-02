@@ -19,5 +19,6 @@ jobs:
       - uses: jdx/mise-action@v5
       # Validates the wrapper jar and caches Gradle.
       - uses: gradle/actions/setup-gradle@v6
+      - run: mise run ndk
       - run: mise run test
       - run: mise run build

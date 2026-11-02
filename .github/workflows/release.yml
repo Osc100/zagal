@@ -17,6 +17,7 @@ jobs:
           submodules: true
       - uses: jdx/mise-action@v5
       - uses: gradle/actions/setup-gradle@v6
+      - run: mise run ndk
       - run: mise run test
       - name: Restore the signing key
         env:

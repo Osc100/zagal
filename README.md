@@ -108,6 +108,7 @@ Android Studio's default `~/Android/Sdk`).
 ```
 git submodule update --init --depth 1   # ghostty's source, for libghostty-vt
 mise install                            # JDK and Zig
+mise run ndk                            # the NDK version the terminal pins
 mise run build                          # debug APK, installs beside the release as "Zagal dev"
 mise run test
 ```
