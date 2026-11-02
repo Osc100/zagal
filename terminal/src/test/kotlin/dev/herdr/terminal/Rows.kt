@@ -97,3 +97,23 @@ fun distance(a: Int, b: Int) = maxOf(
 /** The share of [pixels] within [tolerance] of [color]. */
 fun share(pixels: List<Int>, color: Int, tolerance: Int = 24) =
   pixels.count { distance(it, color) <= tolerance }.toDouble() / pixels.size
+
+/** A bitmap's canvas that also keeps the text drawn on it, a string per call. */
+class TextCanvas(bitmap: Bitmap) : Canvas(bitmap) {
+  val texts = mutableListOf<String>()
+
+  override fun drawText(text: CharArray, index: Int, count: Int, x: Float, y: Float, paint: android.graphics.Paint) {
+    texts += String(text, index, count)
+    super.drawText(text, index, count, x, y, paint)
+  }
+
+  override fun drawText(text: CharSequence, start: Int, end: Int, x: Float, y: Float, paint: android.graphics.Paint) {
+    texts += text.subSequence(start, end).toString()
+    super.drawText(text, start, end, x, y, paint)
+  }
+
+  override fun drawText(text: String, x: Float, y: Float, paint: android.graphics.Paint) {
+    texts += text
+    super.drawText(text, x, y, paint)
+  }
+}

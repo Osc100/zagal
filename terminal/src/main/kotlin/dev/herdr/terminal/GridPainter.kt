@@ -194,9 +194,10 @@ internal class GridPainter(private val context: Context) {
 
   /**
    * Reads one row record at [buf]'s position (leaving it at the next) and
-   * draws it on [canvas]; null only reads it (a row outside the grid).
+   * draws it on [canvas]; null only reads it (a row outside the grid). The
+   * cursor at ([cursorX], [cursorY]) ends a ligature run.
    */
-  fun drawRow(buf: ByteBuffer, canvas: Canvas?, snapCols: Int) {
+  fun drawRow(buf: ByteBuffer, canvas: Canvas?, snapCols: Int, cursorX: Int = -1, cursorY: Int = -1) {
     val rowIndex = buf.int
     val selStart = buf.int
     val selEnd = buf.int
@@ -285,9 +286,12 @@ internal class GridPainter(private val context: Context) {
       val paint = paintFor(codepoint, flags)
       // Ligatures: extend over following ASCII cells with the same look.
       var end = col + 1
+      // Not over a change of background (a selection's edge) or the cursor,
+      // which draws its own cell's character, as herdr-app's runs.
       if (ligatures && joinable(col)) {
-        while (end < colCount && joinable(end) && cellFg[end] == cellFg[col] &&
-          cellFlags[end] and STYLE_FLAGS == flags and STYLE_FLAGS
+        val cursor = if (rowIndex == cursorY) cursorX else -1
+        while (end < colCount && joinable(end) && cellFg[end] == cellFg[col] && cellBg[end] == cellBg[col] &&
+          cellFlags[end] and STYLE_FLAGS == flags and STYLE_FLAGS && end != cursor && col != cursor
         ) end++
       }
       paint.color = cellFg[col]

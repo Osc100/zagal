@@ -80,6 +80,8 @@ pub const Session = struct {
     held_since: ?i64 = null,
     // The default colors the last snapshot gave, which the view drew its rows in.
     shown_colors: ?[2]vt.color.RGB = null,
+    // Where the cursor was (x, y) when the view last drew its rows.
+    shown_cursor: ?[2]usize = null,
     // Text a program copied (OSC 52), until takeClipboard collects it.
     clipboard: std.ArrayList(u8) = .empty,
     clipboard_pending: bool = false,
@@ -282,6 +284,19 @@ pub fn fillSnapshot(session: *Session, buf: []u8) !i32 {
     const colors = [2]vt.color.RGB{ state.colors.background, state.colors.foreground };
     const recolored = if (session.shown_colors) |shown| !std.meta.eql(shown, colors) else false;
     session.shown_colors = colors;
+    // The cursor's rows: the one it left and the one it's on, drawn again
+    // with it (a ligature run ends at the cursor).
+    const at: ?[2]usize = if (state.cursor.viewport) |vp| .{ vp.x, vp.y } else null;
+    if (!std.meta.eql(at, session.shown_cursor)) {
+        const range = state.rowDataRange();
+        const row_dirty = state.row_data.items(.dirty)[range.start..range.end];
+        for ([_]?[2]usize{ session.shown_cursor, at }) |cursor_at| {
+            const p = cursor_at orelse continue;
+            if (p[1] < row_dirty.len) row_dirty[p[1]] = true;
+        }
+        if (state.dirty == .false) state.dirty = .partial;
+        session.shown_cursor = at;
+    }
     const dirty: @TypeOf(state.dirty) = if (recolored) .full else state.dirty;
     const cols: usize = state.cols;
     const cursor = state.cursor;
@@ -624,4 +639,17 @@ test "a theme without colors goes back to the built-in ones" {
     _ = try fillSnapshot(session, &buf);
     try std.testing.expectEqual(argb(default_background), headerOf(&buf).bg);
     try std.testing.expectEqual(argb(default_foreground), headerOf(&buf).fg);
+}
+
+test "the cursor moving sends the rows it left and moved to" {
+    const session = try create(10, 3, 100);
+    defer destroy(session);
+    var buf: testBuffer(10, 3) align(4) = undefined;
+    session.stream.nextSlice("a\r\nb\r\nc\x1b[1;1H");
+    _ = try fillSnapshot(session, &buf);
+    try std.testing.expectEqual(0, try fillSnapshot(session, &buf));
+    // Row 0 to row 2: those two, not row 1.
+    session.stream.nextSlice("\x1b[3;1H");
+    try std.testing.expectEqual(2, try fillSnapshot(session, &buf));
+    try std.testing.expectEqual(0, std.mem.readInt(i32, buf[header_bytes..][0..4], .little));
 }

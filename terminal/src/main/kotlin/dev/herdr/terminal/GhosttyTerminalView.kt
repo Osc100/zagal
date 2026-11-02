@@ -913,7 +913,7 @@ internal class GhosttyTerminalView(context: Context) : View(context) {
     }
     val canvas = node.beginRecording(gridWidthPx, gridHeightPx)
     try {
-      painter.drawRow(buf, canvas, snapCols)
+      painter.drawRow(buf, canvas, snapCols, cursorX, cursorY)
     } finally {
       node.endRecording()
     }
