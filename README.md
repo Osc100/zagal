@@ -23,29 +23,24 @@
   <img src="fastlane/metadata/android/en-US/images/tenInchScreenshots/1.png" width="92%" alt="On a tablet: spaces and agents in a sidebar beside the terminal">
 </p>
 
-Zagal connects to your machines over SSH and shows their herdr-core
-terminals, laid out like [herdr-app](https://github.com/herdrdev/herdr-app).
-It's native, fast, and simple to set up.
-
-Not affiliated with the herdr project.
+Your herdr-core terminals and agents, laid out like
+[herdr-app](https://github.com/herdrdev/herdr-app). Native, fast, and simple
+to set up.
 
 ## What it does
 
 - **Agents**: every agent on every machine, grouped by working, blocked,
   done and idle, with the titles herdr-app gives them.
 - **Spaces and tabs**: open, add and close them, as on the desktop.
-- **Terminal**: built on [ghostty](https://ghostty.org)'s VT core, with
-  colors, mouse modes, scrollback, selection, paste and Nerd Font icons.
-  Leaving a terminal doesn't stop its program.
+- **Terminal**: ghostty's VT core, with colors, mouse modes, scrollback,
+  selection, paste and Nerd Font icons. Leaving a terminal doesn't stop its
+  program.
 - **Notifications** when an agent finishes or needs you, with a preview of
   its screen.
 - **Several hosts at once**, merged into one view. Machines a host reaches
   show up too, with why they're down and a button to reconnect.
 - **Tablets** get the desktop's shape: a sidebar beside the terminal.
 - **Themes**: herdr's (graphite, ink, moss, paper) or Material You.
-
-There is no account and no server in between: only SSH from your phone to
-your machines.
 
 ## Requirements
 
@@ -77,24 +72,22 @@ which one to update.
 
 ## Security
 
-- SSH is [JSch](https://github.com/mwiede/jsch) (the maintained fork by
-  mwiede), with [Bouncy Castle](https://www.bouncycastle.org/) for the
-  algorithms Android's own crypto lacks: Ed25519 keys and signatures, X25519
-  and ML-KEM key exchange.
-- The phone's SSH key is an ed25519 key generated on the phone by JSch. Its
-  private half is encrypted with AES-GCM under a key the
+- The phone's SSH key is ed25519, generated on the phone. Its private half
+  is encrypted with AES-GCM under a key the
   [Android Keystore](https://developer.android.com/privacy-and-security/keystore)
   holds and never lets out. Showing the private key in Settings takes a
   fingerprint or screen-lock check
   ([BiometricPrompt](https://developer.android.com/identity/sign-in/biometric-auth)).
 - Host keys are pinned when you trust them; Zagal won't connect if one
   changes.
-- Zagal collects nothing and talks only to the hosts you add.
+- No account, no server in between, no data collected: Zagal talks only
+  to the hosts you add.
 
 ## Built with
 
-- [JSch](https://github.com/mwiede/jsch) and
-  [Bouncy Castle](https://www.bouncycastle.org/) for SSH.
+- [JSch](https://github.com/mwiede/jsch) (mwiede's fork) for SSH, with
+  [Bouncy Castle](https://www.bouncycastle.org/) for the Ed25519, X25519 and
+  ML-KEM that Android's own crypto lacks.
 - [ghostty](https://github.com/ghostty-org/ghostty)'s VT core (libghostty-vt,
   through a JNI bridge in [Zig](https://ziglang.org)) for the terminal,
   started from [expo-libghostty](https://github.com/arcboxlabs/expo-libghostty).
@@ -119,8 +112,8 @@ mise run build                          # debug APK, installs beside the release
 mise run test
 ```
 
-Releases are built and signed by CI when a `v*` tag is pushed. How the code
-is organized: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for how the code is
+organized.
 
 ## License
 
