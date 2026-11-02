@@ -215,11 +215,10 @@ fn resize(
     session.dirtyAll();
 }
 
-// Sets the terminal's default colors (theme). Nulls clear back to the
-// built-in defaults; invalid color strings are logged and skipped, as ghostty
-// does for bad config values. The palette overrides entries by index on top
-// of ghostty's default 256-color palette; OSC 4 overrides set by the running
-// program are kept by the terminal.
+// Sets the terminal's default colors (theme; see Session.setTheme). Invalid
+// color strings are logged and skipped, as ghostty does for bad config
+// values. The palette overrides entries by index on top of ghostty's default
+// 256-color palette.
 fn setTheme(
     env: Env,
     _: c.jobject,
@@ -230,11 +229,6 @@ fn setTheme(
     palette: c.jobjectArray,
 ) callconv(.c) void {
     const session = fromHandle(handle) orelse return;
-    const t = &session.term;
-    t.colors.foreground.default = colorOf(env, foreground);
-    t.colors.background.default = colorOf(env, background);
-    t.colors.cursor.default = colorOf(env, cursor);
-
     var table: vt.color.Palette = vt.color.default;
     if (palette != null) {
         const count: usize = @min(@as(usize, @intCast(jni(env).GetArrayLength.?(env, palette))), 256);
@@ -244,9 +238,7 @@ fn setTheme(
             if (entry != null) jni(env).DeleteLocalRef.?(env, entry);
         }
     }
-    t.colors.palette.changeDefault(t.gpa(), table) catch {};
-    t.flags.dirty.palette = true;
-    session.dirtyAll();
+    session.setTheme(colorOf(env, foreground), colorOf(env, background), colorOf(env, cursor), table);
 }
 
 // Parses a color in ghostty config syntax to ARGB, or 0 when invalid (real

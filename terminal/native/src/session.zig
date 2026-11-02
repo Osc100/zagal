@@ -52,6 +52,9 @@ const flag_bg_none: u16 = 1 << 10;
 const flag_overline: u16 = 1 << 11;
 
 pub const header_bytes = 19 * 4;
+// Colors when the theme gives none.
+const default_background: vt.color.RGB = .{ .r = 0x00, .g = 0x00, .b = 0x00 };
+const default_foreground: vt.color.RGB = .{ .r = 0xFF, .g = 0xFF, .b = 0xFF };
 const row_header_bytes = 4 * 4;
 const cell_record_bytes = 20;
 // How long a synchronized-output hold may last before drawing resumes anyway.
@@ -140,6 +143,21 @@ pub const Session = struct {
         return true;
     }
 
+    /// The default colors (a theme): null foreground and background are
+    /// the built-in white on black, a null cursor follows the text. OSC 4
+    /// overrides set by the running program are kept by the terminal.
+    pub fn setTheme(self: *Session, fg: ?vt.color.RGB, bg: ?vt.color.RGB, cursor: ?vt.color.RGB, palette: vt.color.Palette) void {
+        const t = &self.term;
+        // Never none: with either unset, the render state keeps whatever
+        // colors it had and the view draws in a theme that's gone.
+        t.colors.foreground.default = fg orelse default_foreground;
+        t.colors.background.default = bg orelse default_background;
+        t.colors.cursor.default = cursor;
+        t.colors.palette.changeDefault(t.gpa(), palette) catch {};
+        t.flags.dirty.palette = true;
+        self.dirtyAll();
+    }
+
     pub fn viewportPin(self: *Session, col: i32, row: i32) ?vt.Pin {
         if (col < 0 or row < 0) return null;
         return self.term.screens.active.pages.pin(.{ .viewport = .{
@@ -176,8 +194,8 @@ pub fn create(cols: i32, rows: i32, max_scrollback: i64) !*Session {
     handler.effects.clipboard_write = &Session.clipboardWrite;
     session.stream = .init(.{ .allocator = alloc, .handler = handler });
 
-    t.colors.background.default = .{ .r = 0x00, .g = 0x00, .b = 0x00 };
-    t.colors.foreground.default = .{ .r = 0xFF, .g = 0xFF, .b = 0xFF };
+    t.colors.background.default = default_background;
+    t.colors.foreground.default = default_foreground;
     t.flags.dirty.palette = true;
     // libghostty's default is a steady cursor; blink by default like the
     // terminal apps users come from. DECSCUSR still overrides.
@@ -593,4 +611,17 @@ test "an overlined cell says so" {
     }.f;
     try std.testing.expect(flags(&buf, 0) & flag_overline != 0);
     try std.testing.expect(flags(&buf, 1) & flag_overline == 0);
+}
+
+test "a theme without colors goes back to the built-in ones" {
+    const session = try create(10, 3, 100);
+    defer destroy(session);
+    var buf: testBuffer(10, 3) align(4) = undefined;
+    session.setTheme(.{ .r = 1, .g = 2, .b = 3 }, .{ .r = 4, .g = 5, .b = 6 }, null, vt.color.default);
+    _ = try fillSnapshot(session, &buf);
+    try std.testing.expectEqual(argb(.{ .r = 4, .g = 5, .b = 6 }), headerOf(&buf).bg);
+    session.setTheme(null, null, null, vt.color.default);
+    _ = try fillSnapshot(session, &buf);
+    try std.testing.expectEqual(argb(default_background), headerOf(&buf).bg);
+    try std.testing.expectEqual(argb(default_foreground), headerOf(&buf).fg);
 }
