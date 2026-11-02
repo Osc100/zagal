@@ -8,8 +8,8 @@
 //! per-cell JNI calls. See GhosttyTerminalView.kt for the reader side.
 //!
 //! Buffer layout:
-//!   header: 19 x i32
-//!     [0] version (5)          [1] dirty kind (0 none / 1 partial / 2 full)
+//!   header: 22 x i32
+//!     [0] version (6)          [1] dirty kind (0 none / 1 partial / 2 full)
 //!     [2] cols                 [3] rows
 //!     [4] default bg (ARGB)    [5] default fg (ARGB)
 //!     [6] cursor x or -1 (a wide character's first cell when on either)
@@ -23,6 +23,7 @@
 //!     [15] the cursor's cell's flags (as a cell's, below)
 //!     [16] its text's length in UTF-16 units (0-4, the first of a longer one)
 //!     [17..18] its text: 4 x u16 — a block cursor draws it over itself
+//!     [19] scrollbar: rows in all  [20] the viewport's first  [21] its rows
 //!   row record:
 //!     i32 rowIndex, i32 selStartX or -1, i32 selEndX or -1, i32 textUnits,
 //!     i32 movedFrom: -1, or the row whose drawing this one is, unchanged
@@ -57,7 +58,7 @@ const flag_fg_default: u16 = 1 << 9;
 const flag_bg_none: u16 = 1 << 10;
 const flag_overline: u16 = 1 << 11;
 
-pub const header_bytes = 19 * 4;
+pub const header_bytes = 22 * 4;
 // Colors when the theme gives none.
 const default_background: vt.color.RGB = .{ .r = 0x00, .g = 0x00, .b = 0x00 };
 const default_foreground: vt.color.RGB = .{ .r = 0xFF, .g = 0xFF, .b = 0xFF };
@@ -365,8 +366,11 @@ pub fn fillSnapshot(session: *Session, buf: []u8) !i32 {
         glyph_units = appendUtf16(cell.codepoint(), &glyph, 0);
     }
 
+    // Where the viewport is in the scrollback, for the view's scrollbar.
+    const bar = session.term.screens.active.pages.scrollbar();
+
     const header = [_]i32{
-        5,
+        6,
         @backingInt(dirty),
         @intCast(cols),
         @intCast(state.rows),
@@ -385,6 +389,9 @@ pub fn fillSnapshot(session: *Session, buf: []u8) !i32 {
         @intCast(glyph_units),
         @bitCast(@as(u32, glyph[0]) | @as(u32, glyph[1]) << 16),
         @bitCast(@as(u32, glyph[2]) | @as(u32, glyph[3]) << 16),
+        @intCast(@min(bar.total, std.math.maxInt(i32))),
+        @intCast(@min(bar.offset, std.math.maxInt(i32))),
+        @intCast(@min(bar.len, std.math.maxInt(i32))),
     };
     comptime std.debug.assert(header.len * 4 == header_bytes);
     for (header, 0..) |v, i| putI32(buf, i * 4, v);
@@ -925,4 +932,21 @@ test "a link and the cells it covers, wrapped or not" {
     try std.testing.expectEqualStrings("https://h.co", osc.uri);
     try std.testing.expectEqual(Link.Cell{ .x = 2, .y = 2 }, osc.first);
     try std.testing.expectEqual(Link.Cell{ .x = 5, .y = 2 }, osc.last);
+}
+
+test "the snapshot says where the viewport is in the scrollback" {
+    const session = try create(10, 3, 100);
+    defer destroy(session);
+    var buf: testBuffer(10, 3) align(4) = undefined;
+    session.stream.nextSlice("1\r\n2\r\n3\r\n4\r\n5");
+    session.term.scrollViewport(.{ .delta = -1 });
+    _ = try fillSnapshot(session, &buf);
+    const at = struct {
+        fn f(b: []const u8, i: usize) i32 {
+            return std.mem.readInt(i32, b[i * 4 ..][0..4], .little);
+        }
+    }.f;
+    try std.testing.expectEqual(5, at(&buf, 19));
+    try std.testing.expectEqual(1, at(&buf, 20));
+    try std.testing.expectEqual(3, at(&buf, 21));
 }

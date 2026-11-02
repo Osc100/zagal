@@ -563,11 +563,6 @@ internal class GhosttyTerminalView(context: Context) : View(context) {
 
     val rowCount = GhosttyVt.snapshot(handle, buf)
     if (rowCount < 0) return
-    GhosttyVt.scrollbar(handle)?.let { scrollbar ->
-      scrollbarTotal = scrollbar[0]
-      scrollbarOffset = scrollbar[1]
-      scrollbarLen = scrollbar[2]
-    }
 
     buf.position(0)
     buf.int // version
@@ -591,6 +586,9 @@ internal class GhosttyTerminalView(context: Context) : View(context) {
     cursorGlyphFlags = buf.int
     cursorGlyphLength = buf.int
     for (i in 0 until 4) cursorGlyph[i] = buf.short.toInt().toChar()
+    scrollbarTotal = buf.int.toLong()
+    scrollbarOffset = buf.int.toLong()
+    scrollbarLen = buf.int.toLong()
     syncBlinkTimer()
 
     recordRows(buf, rowCount, snapCols)

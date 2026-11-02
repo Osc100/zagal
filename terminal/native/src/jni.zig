@@ -257,17 +257,6 @@ fn scrollToBottom(_: Env, _: c.jobject, handle: c.jlong) callconv(.c) void {
     session.term.scrollViewport(.bottom);
 }
 
-// The viewport scrollbar as [total, offset, len] rows.
-fn scrollbar(env: Env, _: c.jobject, handle: c.jlong) callconv(.c) c.jlongArray {
-    const session = fromHandle(handle) orelse return null;
-    const bar = session.term.screens.active.pages.scrollbar();
-    const out = jni(env).NewLongArray.?(env, 3);
-    if (out == null) return null;
-    const values = [3]c.jlong{ @intCast(bar.total), @intCast(bar.offset), @intCast(bar.len) };
-    jni(env).SetLongArrayRegion.?(env, out, 0, 3, &values);
-    return out;
-}
-
 fn snapshot(
     env: Env,
     _: c.jobject,
@@ -579,7 +568,6 @@ const methods = [_]c.JNINativeMethod{
     method("encodeWheel", "(JZIFFIIII)[B", &encodeWheel),
     method("encodeMouse", "(JIIIFFIIIIZ)[B", &encodeMouse),
     method("redraw", "(J)V", &redraw),
-    method("scrollbar", "(J)[J", &scrollbar),
     method("snapshot", "(JLjava/nio/ByteBuffer;)I", &snapshot),
     method("encodeKey", "(JIIIII[B)[B", &encodeKey),
     method("selectWord", "(JII)Z", &selectWord),

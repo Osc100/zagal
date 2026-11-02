@@ -5,6 +5,7 @@ import android.graphics.Canvas
 import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.Typeface
+import android.util.SparseIntArray
 import java.nio.ByteBuffer
 import kotlin.math.ceil
 import kotlin.math.max
@@ -41,7 +42,9 @@ internal class GridPainter(private val context: Context) {
   // many arrows and shapes): a subset of Noto Sans Symbols 2. Whether the
   // cell's own paint can, by code point, until the typeface changes.
   private val fallbackPaint: Paint? = assetPaint(FALLBACK_FONT_ASSET)
-  private val drawable = HashMap<Int, Boolean>()
+  // 0 not asked yet, else YES or NO: primitive, as it's asked for every cell
+  // past ASCII on every row recorded.
+  private val drawable = SparseIntArray()
   private val fillPaint = Paint()
   private val cursorPaint = Paint()
   private val sprites = Sprites()
@@ -458,8 +461,13 @@ internal class GridPainter(private val context: Context) {
   }
 
   /** Whether the terminal font, or a font Android falls back to, has [codepoint]. */
-  private fun canDraw(codepoint: Int) =
-    drawable.getOrPut(codepoint) { textPaint.hasGlyph(String(Character.toChars(codepoint))) }
+  private fun canDraw(codepoint: Int): Boolean {
+    val known = drawable.get(codepoint)
+    if (known != 0) return known == YES
+    val has = textPaint.hasGlyph(String(Character.toChars(codepoint)))
+    drawable.put(codepoint, if (has) YES else NO)
+    return has
+  }
 
   /** A cell's width in px: two columns for a wide character. */
   private fun cellSpan(flags: Int) = if (flags and FLAG_WIDE != 0) cellWidth * 2 else cellWidth
@@ -570,6 +578,9 @@ internal class GridPainter(private val context: Context) {
         0.0722 * channel(color and 0xFF)
     }
 
+    private const val YES = 1
+    private const val NO = 2
+
     // Below this, selected text takes a default color.
     private const val MIN_SELECTED_CONTRAST = 1.5
 
@@ -587,7 +598,7 @@ internal class GridPainter(private val context: Context) {
     const val PUA_SUPPLEMENTARY_FIRST = 0xF0000
 
     // The snapshot's layout (jni.zig).
-    const val HEADER_BYTES = 76
+    const val HEADER_BYTES = 88
     const val ROW_HEADER_BYTES = 20
     const val CELL_RECORD_BYTES = 20
     const val MAX_CELL_TEXT_UNITS = 32

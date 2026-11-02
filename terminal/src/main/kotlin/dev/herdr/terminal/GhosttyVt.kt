@@ -90,12 +90,9 @@ internal object GhosttyVt {
     anyPressed: Boolean
   ): ByteArray?
 
-  /** Viewport scrollbar as [total, offset, len] rows, or null. */
-  external fun scrollbar(handle: Long): LongArray?
-
   /**
    * Update the render state and flatten dirty rows into [buffer] (direct,
-   * little-endian; layout documented in native/src/jni.zig). Returns the number
+   * little-endian; layout documented in native/src/session.zig). Returns the number
    * of row records written, or -1 on error/too-small buffer.
    */
   external fun snapshot(handle: Long, buffer: ByteBuffer): Int
