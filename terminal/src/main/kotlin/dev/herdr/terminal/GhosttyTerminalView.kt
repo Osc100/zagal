@@ -139,7 +139,9 @@ internal class GhosttyTerminalView(context: Context) : View(context) {
   }
 
   private val frameCallback: Choreographer.FrameCallback = Choreographer.FrameCallback { if (pacer.fired()) renderFrame() }
-  private val pacer: FramePacer = FramePacer { Choreographer.getInstance().postFrameCallback(frameCallback) }
+  private val pacer: FramePacer = FramePacer(SystemClock::uptimeMillis) { delay ->
+    Choreographer.getInstance().postFrameCallbackDelayed(frameCallback, delay)
+  }
 
   private var scrollAccum = 0f
   private var lastTouchX = 0f
@@ -372,7 +374,7 @@ internal class GhosttyTerminalView(context: Context) : View(context) {
     }
     GhosttyVt.takeClipboard(handle)?.let(::copyFromProgram)
     holdBlinkSolid()
-    scheduleFrame()
+    pacer.output()
   }
 
   /** Mark the underlying PTY as exited: stop forwarding input. */
@@ -401,6 +403,7 @@ internal class GhosttyTerminalView(context: Context) : View(context) {
       // Typing while scrolled into history jumps back to the live view.
       if (handle != 0L && scrolledBack) jumpToBottom()
       holdBlinkSolid()
+      pacer.input()
       onInputBytes?.invoke(bytes)
     }
   }
