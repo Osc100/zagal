@@ -16,8 +16,11 @@ version=$(sed -n 's/.*ndkVersion = "\(.*\)".*/\1/p' terminal/build.gradle.kts)
 '''
 
 [tasks.test]
-description = "Protocol and app unit tests"
-run = "./gradlew :core:jvmTest :app:testDebugUnitTest"
+description = "Protocol, app and terminal unit tests, and the native session's"
+run = [
+  "./gradlew :core:jvmTest :app:testDebugUnitTest :terminal:testDebugUnitTest",
+  "cd terminal/native && zig build test",
+]
 
 [tasks.build]
 description = "Debug APK"
