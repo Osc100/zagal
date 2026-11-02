@@ -1,0 +1,2 @@
+- Fixed: a blank terminal when coming back to the app with the keyboard up
+- Agents of a disconnected host are no longer listed, pinned or not

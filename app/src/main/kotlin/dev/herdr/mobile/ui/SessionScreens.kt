@@ -73,7 +73,7 @@ import dev.herdr.mobile.session.MachineState
 import dev.herdr.mobile.session.Session
 import dev.herdr.mobile.session.Space
 import dev.herdr.mobile.session.Terminal
-import dev.herdr.mobile.session.byPriority
+import dev.herdr.mobile.session.agents
 import dev.herdr.mobile.session.duration
 import dev.herdr.mobile.session.hostOf
 import dev.herdr.mobile.session.localOf
@@ -139,7 +139,7 @@ fun AgentsList(vm: AgentsViewModel, onOpen: (String) -> Unit, onAddHost: () -> U
             }
             return
         }
-        val agents = byPriority(session.terminals)
+        val agents = session.agents()
         if (agents.isEmpty()) {
             if (rail) return
             Text(

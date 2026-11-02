@@ -94,6 +94,15 @@ fun byPriority(terminals: List<Terminal>): List<Terminal> =
     terminals.filter { it.agent && it.attention != null && it.space != null }
         .sortedWith(compareByDescending<Terminal> { it.attention!!.priority }.thenByDescending { it.since ?: 0 })
 
+/**
+ * The agents to list, [byPriority]: only those of hosts that are connected.
+ * A lost host's are what it last said, not what they're doing, pinned or not.
+ */
+fun Session.agents(): List<Terminal> {
+    val up = machines.filter { it.name == null && it.state == MachineState.Connected }.mapTo(HashSet()) { it.host }
+    return byPriority(terminals.filter { it.host in up })
+}
+
 fun duration(ms: Long): String {
     val m = ms / 60_000
     if (m < 1) return "<1m"

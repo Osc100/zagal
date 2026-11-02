@@ -62,7 +62,7 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navDeepLink
 import androidx.navigation.toRoute
-import dev.herdr.mobile.session.byPriority
+import dev.herdr.mobile.session.agents
 import dev.herdr.mobile.ui.AgentsScreen
 import dev.herdr.mobile.ui.HerdrTheme
 import dev.herdr.mobile.ui.LoadingScreen
@@ -235,7 +235,7 @@ private fun App(main: MainViewModel) {
     Scaffold(
         bottomBar = {
             if (!WindowInsets.isImeVisible) {
-                val needs = byPriority(session.terminals).count { it.attention == Attention.Blocked }
+                val needs = session.agents().count { it.attention == Attention.Blocked }
                 NavigationBar {
                     for (d in TABS) {
                         val on = entry?.destination?.hierarchy?.any { it.hasRoute(d.route::class) } == true

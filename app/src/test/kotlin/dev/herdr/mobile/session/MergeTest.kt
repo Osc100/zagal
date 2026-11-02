@@ -45,6 +45,16 @@ class MergeTest {
     }
 
     @Test
+    fun aLostHostsAgentsAreNotListedEvenPinned() {
+        val up = snapshot(agent("t1", "working"))
+        val lost = snapshot(agent("t1", "blocked").copy(pinned = true), connection = Connection.Lost, core = "beta")
+        val s = merge(listOf(alpha to up, beta to lost), idle = false)
+
+        assertEquals(listOf("${alpha.id} t1", "${beta.id} t1"), s.terminals.map { it.address })
+        assertEquals(listOf("${alpha.id} t1"), s.agents().map { it.address })
+    }
+
+    @Test
     fun parsesWhatYouTypeToAddAHost() {
         assertEquals(Host(id = "dev@box:22", user = "dev", host = "box"), parseTarget(" dev@box "))
         assertEquals(2222, parseTarget("me@10.0.0.2:2222")?.port)

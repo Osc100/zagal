@@ -57,7 +57,7 @@ import dev.herdr.mobile.session.Session
 import dev.herdr.mobile.session.Space
 import dev.herdr.mobile.session.Tab
 import dev.herdr.mobile.session.Terminal
-import dev.herdr.mobile.session.byPriority
+import dev.herdr.mobile.session.agents
 import dev.herdr.mobile.session.localOf
 import herdr.core.Attention
 
@@ -100,7 +100,7 @@ fun TerminalScreen(
     // Nothing opened yet, or the last one's host hasn't answered: whatever needs
     // you most, from the first host that does, without waiting for the others.
     val address = asked?.address
-        ?: if (gone) "" else byPriority(session.terminals).firstOrNull()?.address
+        ?: if (gone) "" else session.agents().firstOrNull()?.address
             ?: session.terminals.firstOrNull()?.address
             ?: ""
     val terminal = session.terminals.find { it.address == address }

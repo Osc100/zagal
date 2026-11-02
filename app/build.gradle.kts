@@ -11,8 +11,8 @@ android {
         applicationId = "io.github.osc100.zagal"
         minSdk = 29
         targetSdk = 37
-        versionCode = 3
-        versionName = "1.2.0"
+        versionCode = 4
+        versionName = "1.2.1"
         // The terminal's libghostty-vt is only built for these.
         ndk {
             abiFilters += setOf("arm64-v8a", "x86_64")

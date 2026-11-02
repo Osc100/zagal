@@ -101,7 +101,9 @@ class TerminalView(context: Context) : LinearLayout(context) {
             KeyBarMode.TYPING -> imeVisible
             KeyBarMode.OFF -> false
         }
-        accessoryBar.visibility = if (shown) VISIBLE else GONE
+        val visibility = if (shown) VISIBLE else GONE
+        var changed = accessoryBar.visibility != visibility
+        accessoryBar.visibility = visibility
         // Edge-to-edge windows don't resize for the keyboard; it covers us.
         // Pad by the covered amount so the bar sits above the IME and the
         // terminal shrinks. Hosts that already handle the keyboard leave no
@@ -113,8 +115,13 @@ class TerminalView(context: Context) : LinearLayout(context) {
         val overlap = if (imeVisible) (imeBottom - gapBelow).coerceAtLeast(0) else 0
         if (paddingBottom != overlap) {
             setPadding(0, 0, 0, overlap)
-            requestLayout()
+            changed = true
         }
+        // From onSizeChanged this runs inside layout(), which drops a layout asked
+        // for in it as it ends: ask again after, or the grid and the bar keep the
+        // sizes they had with the old padding (a grid 0 rows high, coming back
+        // to the app with the keyboard up).
+        if (changed) post(::requestLayout)
     }
 
     override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
