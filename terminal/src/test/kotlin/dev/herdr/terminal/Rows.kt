@@ -29,7 +29,7 @@ fun rowRecord(row: Int, cols: Int, cells: List<Cell>, selStart: Int = -1, selEnd
   val units = text.length
   val size = GridPainter.ROW_HEADER_BYTES + cols * GridPainter.CELL_RECORD_BYTES + units * 2 + 4
   val buf = ByteBuffer.allocate(size).order(ByteOrder.LITTLE_ENDIAN)
-  buf.putInt(row).putInt(selStart).putInt(selEnd).putInt(units)
+  buf.putInt(row).putInt(selStart).putInt(selEnd).putInt(units).putInt(-1)
   for ((i, cell) in all.withIndex()) {
     var flags = cell.flags
     if (cell.fg == 0) flags = flags or GridPainter.FLAG_FG_DEFAULT

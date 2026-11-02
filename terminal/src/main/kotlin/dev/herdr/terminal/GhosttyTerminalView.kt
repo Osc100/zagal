@@ -83,11 +83,19 @@ internal class GhosttyTerminalView(context: Context) : View(context) {
   // ── Grid state ──
   private var cols = INITIAL_COLS
   private var rows = INITIAL_ROWS
-  // One display list per grid row, re-recorded only when the row changes; null
-  // until the row is first drawn. Each spans the whole grid and clips to it, so a
-  // glyph spilling past its row or the grid's edge draws as it did onto the
-  // grid-sized bitmap these replaced.
-  private var rowNodes = arrayOfNulls<RenderNode>(0)
+  // One display list per grid row, re-recorded only when the row changes, moved
+  // when it only scrolled; none until the row is first drawn. Each spans the
+  // whole grid and clips to it, so a glyph spilling past its row or the grid's
+  // edge draws as it did onto the grid-sized bitmap these replaced.
+  private val rowNodes = RowDrawings(
+    create = { RenderNode("terminal row").apply { setPosition(0, 0, gridWidthPx, gridHeightPx) } },
+    discard = RenderNode::discardDisplayList,
+    place = { node, rowsMoved -> node.translationY = (rowsMoved * cellHeight).toFloat() },
+  )
+  // A frame's row records: where each row's is in the snapshot, where it moved from.
+  private var recordAt = IntArray(0)
+  private var movedFrom = IntArray(0)
+  private var recorded = BooleanArray(0)
   private var gridWidthPx = 0
   private var gridHeightPx = 0
   private var snapshotBuf: ByteBuffer? = null
@@ -390,7 +398,7 @@ internal class GhosttyTerminalView(context: Context) : View(context) {
     scroller.abortAnimation()
     removeCallbacks(flingRunnable)
     actionMode?.finish()
-    for (node in rowNodes) node?.discardDisplayList()
+    rowNodes.reset(0)
     if (handle != 0L) {
       GhosttyVt.free(handle)
       handle = 0
@@ -533,8 +541,10 @@ internal class GhosttyTerminalView(context: Context) : View(context) {
   private fun allocateGridBuffers() {
     gridWidthPx = max(1, ceil(cols * cellWidth).toInt())
     gridHeightPx = max(1, rows * cellHeight)
-    for (node in rowNodes) node?.discardDisplayList()
-    rowNodes = arrayOfNulls(rows)
+    rowNodes.reset(rows)
+    recordAt = IntArray(rows)
+    movedFrom = IntArray(rows)
+    recorded = BooleanArray(rows)
     val capacity = GridPainter.HEADER_BYTES + rows * (
       GridPainter.ROW_HEADER_BYTES + cols * GridPainter.CELL_RECORD_BYTES +
         cols * GridPainter.MAX_CELL_TEXT_UNITS * 2 + 4
@@ -561,7 +571,7 @@ internal class GhosttyTerminalView(context: Context) : View(context) {
 
     buf.position(0)
     buf.int // version
-    val dirtyKind = buf.int
+    buf.int // dirty kind: the rows sent say what changed
     val snapCols = buf.int
     buf.int // rows
     painter.defaultBg = buf.int
@@ -583,9 +593,7 @@ internal class GhosttyTerminalView(context: Context) : View(context) {
     for (i in 0 until 4) cursorGlyph[i] = buf.short.toInt().toChar()
     syncBlinkTimer()
 
-    // Everything changed: rows the snapshot leaves out show the background.
-    if (dirtyKind == DIRTY_FULL) for (node in rowNodes) node?.discardDisplayList()
-    repeat(rowCount) { recordRow(buf, snapCols) }
+    recordRows(buf, rowCount, snapCols)
     syncSelectionUi()
     // The text under the pointer may have changed: the link with it.
     if (hoverLink != null) syncHoverLink(ctrl = true)
@@ -896,7 +904,7 @@ internal class GhosttyTerminalView(context: Context) : View(context) {
    * (a TUI's borders) would otherwise stay blank.
    */
   private fun rerecordLostRows() {
-    if (handle == 0L || rowNodes.none { it != null && !it.hasDisplayList() }) return
+    if (handle == 0L || (0 until rowNodes.size).none { rowNodes[it]?.hasDisplayList() == false }) return
     GhosttyVt.redraw(handle)
     renderFrame()
   }
@@ -908,25 +916,47 @@ internal class GhosttyTerminalView(context: Context) : View(context) {
   }
 
   /** Records one snapshot row record into its row's RenderNode. */
-  private fun recordRow(buf: ByteBuffer, snapCols: Int) {
-    val rowIndex = buf.peekInt()
-    if (rowIndex !in rowNodes.indices) {
-      painter.drawRow(buf, null, snapCols)
-      return
+  /**
+   * The snapshot's [count] row records, from [buf]'s position: rows that
+   * changed recorded again, rows that only scrolled moved (their drawings
+   * from where they were), the rest left as they are.
+   */
+  private fun recordRows(buf: ByteBuffer, count: Int, snapCols: Int) {
+    movedFrom.fill(-1)
+    recorded.fill(false)
+    painter.keepSelections()
+    repeat(count) {
+      val at = buf.position()
+      val row = buf.int
+      val selStart = buf.int
+      val selEnd = buf.int
+      val textUnits = buf.int
+      val from = buf.int
+      if (from >= 0) {
+        if (row in movedFrom.indices && from in movedFrom.indices) {
+          movedFrom[row] = from
+          painter.moveSelection(from, row, selStart, selEnd)
+        }
+        return@repeat
+      }
+      buf.position(at + GridPainter.ROW_HEADER_BYTES + snapCols * GridPainter.CELL_RECORD_BYTES + textUnits * 2 + if (textUnits % 2 != 0) 2 else 0)
+      if (row in recorded.indices) {
+        recorded[row] = true
+        recordAt[row] = at
+      }
     }
-    val node = rowNodes[rowIndex] ?: RenderNode("terminal row").also {
-      it.setPosition(0, 0, gridWidthPx, gridHeightPx)
-      rowNodes[rowIndex] = it
+    val end = buf.position()
+    rowNodes.frame(movedFrom, recorded) { row, node ->
+      buf.position(recordAt[row])
+      val canvas = node.beginRecording(gridWidthPx, gridHeightPx)
+      try {
+        painter.drawRow(buf, canvas, snapCols, cursorX, cursorY)
+      } finally {
+        node.endRecording()
+      }
     }
-    val canvas = node.beginRecording(gridWidthPx, gridHeightPx)
-    try {
-      painter.drawRow(buf, canvas, snapCols, cursorX, cursorY)
-    } finally {
-      node.endRecording()
-    }
+    buf.position(end)
   }
-
-  private fun ByteBuffer.peekInt() = getInt(position())
 
   override fun onDraw(canvas: Canvas) {
     canvas.drawColor(painter.defaultBg)
@@ -936,7 +966,7 @@ internal class GhosttyTerminalView(context: Context) : View(context) {
     if (canvas.isHardwareAccelerated) {
       // Back in front: the window's resources went in the background, the rows' drawings with them.
       rerecordLostRows()
-      for (node in rowNodes) if (node != null && node.hasDisplayList()) canvas.drawRenderNode(node)
+      rowNodes.forEach { if (it.hasDisplayList()) canvas.drawRenderNode(it) }
     }
     drawHoverLink(canvas)
     // While composing, the text being composed stands where the cursor is.
@@ -1405,7 +1435,5 @@ internal class GhosttyTerminalView(context: Context) : View(context) {
     const val JUMP_CHIP_ARROW_COLOR = 0xFFE0E0E0.toInt()
 
     const val HOLD_POLL_MS = 100L
-
-    const val DIRTY_FULL = 2
   }
 }

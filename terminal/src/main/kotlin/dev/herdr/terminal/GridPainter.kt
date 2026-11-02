@@ -183,6 +183,23 @@ internal class GridPainter(private val context: Context) {
     rowSelEndWide = BooleanArray(rows)
   }
 
+  // The rows' selections as the frame began, for rows moved from them.
+  private var keptSelEndWide = BooleanArray(0)
+
+  /** Before a frame's records: the rows' selections as they are. */
+  fun keepSelections() {
+    if (keptSelEndWide.size != rowSelEndWide.size) keptSelEndWide = BooleanArray(rowSelEndWide.size)
+    rowSelEndWide.copyInto(keptSelEndWide)
+  }
+
+  /** Row [to] shows what row [from] did (it scrolled), selected [selStart]–[selEnd]. */
+  fun moveSelection(from: Int, to: Int, selStart: Int, selEnd: Int) {
+    if (to >= rowSelStart.size || from >= keptSelEndWide.size) return
+    rowSelStart[to] = selStart
+    rowSelEnd[to] = selEnd
+    rowSelEndWide[to] = keptSelEndWide[from]
+  }
+
   private fun joinable(col: Int): Boolean {
     val flags = cellFlags[col]
     if (cellTextLen[col] != 1 || flags and (FLAG_SPACER or FLAG_INVISIBLE or FLAG_WIDE) != 0) {
@@ -202,6 +219,7 @@ internal class GridPainter(private val context: Context) {
     val selStart = buf.int
     val selEnd = buf.int
     val textUnits = buf.int
+    buf.int // moved from: -1 (a record with its cells)
     if (rowIndex < rowSelStart.size) {
       rowSelStart[rowIndex] = selStart
       rowSelEnd[rowIndex] = selEnd
@@ -542,7 +560,7 @@ internal class GridPainter(private val context: Context) {
 
     // The snapshot's layout (jni.zig).
     const val HEADER_BYTES = 76
-    const val ROW_HEADER_BYTES = 16
+    const val ROW_HEADER_BYTES = 20
     const val CELL_RECORD_BYTES = 20
     const val MAX_CELL_TEXT_UNITS = 32
     const val UNDERLINE_SINGLE = 1

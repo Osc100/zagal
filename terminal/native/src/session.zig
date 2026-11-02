@@ -24,13 +24,19 @@
 //!     [16] its text's length in UTF-16 units (0-4, the first of a longer one)
 //!     [17..18] its text: 4 x u16 — a block cursor draws it over itself
 //!   row record:
-//!     i32 rowIndex, i32 selStartX or -1, i32 selEndX or -1, i32 textUnits
+//!     i32 rowIndex, i32 selStartX or -1, i32 selEndX or -1, i32 textUnits,
+//!     i32 movedFrom: -1, or the row whose drawing this one is, unchanged
+//!       (the viewport moved): then nothing follows, cells or text
 //!     cells[cols] x 20 bytes:
 //!       i32 fg (ARGB), i32 bg (ARGB),
 //!       u16 textOffset (UTF-16 units into row blob), u16 textLen (units),
 //!       u16 flags, u16 underline style (0 none, 1 single, 2 double,
 //!       3 curly, 4 dotted, 5 dashed), i32 underline color (ARGB) or 0
 //!     u16 text[textUnits], zero-padded to a 4-byte boundary
+//!
+//! Rows left out are as the view drew them: unchanged, where they were. A
+//! row the program rewrote as it was isn't sent again; one that only moved
+//! (scrolled) comes as where it was.
 
 const std = @import("std");
 const vt = @import("ghostty-vt");
@@ -55,7 +61,7 @@ pub const header_bytes = 19 * 4;
 // Colors when the theme gives none.
 const default_background: vt.color.RGB = .{ .r = 0x00, .g = 0x00, .b = 0x00 };
 const default_foreground: vt.color.RGB = .{ .r = 0xFF, .g = 0xFF, .b = 0xFF };
-const row_header_bytes = 4 * 4;
+const row_header_bytes = 5 * 4;
 const cell_record_bytes = 20;
 // How long a synchronized-output hold may last before drawing resumes anyway.
 const max_hold_ms = 1000;
@@ -67,6 +73,14 @@ const max_cell_text_units = 32;
 // Default boundaries for word selection, as ghostty's own
 // (terminal/selection_codepoints.zig, which the module doesn't export).
 pub const word_boundaries = [_]u21{ 0, ' ', '\t', '\'', '"', '│', '`', '|', ':', ';', ',', '(', ')', '[', ']', '{', '}', '<', '>', '$' };
+
+/// A row as the view drew it: the row of the terminal it showed (ghostty's
+/// row id) and a hash of how it looked.
+const Shown = struct {
+    serial: u64,
+    y: u32,
+    hash: u64,
+};
 
 pub const Session = struct {
     io: vt.TinyIo = .init,
@@ -82,6 +96,10 @@ pub const Session = struct {
     shown_colors: ?[2]vt.color.RGB = null,
     // Where the cursor was (x, y) when the view last drew its rows.
     shown_cursor: ?[2]usize = null,
+    // What each of the view's rows was drawn from (empty: nothing, every row
+    // is sent), and room for the next snapshot's.
+    shown_rows: std.ArrayList(Shown) = .empty,
+    next_rows: std.ArrayList(Shown) = .empty,
     // Text a program copied (OSC 52), until takeClipboard collects it.
     clipboard: std.ArrayList(u8) = .empty,
     clipboard_pending: bool = false,
@@ -137,6 +155,7 @@ pub const Session = struct {
     // full re-emit so the per-row selection ranges refresh everywhere.
     pub fn dirtyAll(self: *Session) void {
         self.render.dirty = .full;
+        self.shown_rows.clearRetainingCapacity();
     }
 
     pub fn select(self: *Session, sel: vt.Selection) bool {
@@ -216,6 +235,8 @@ pub fn destroy(session: *Session) void {
     session.term.deinit(alloc);
     session.pty_out.deinit(alloc);
     session.clipboard.deinit(alloc);
+    session.shown_rows.deinit(alloc);
+    session.next_rows.deinit(alloc);
     alloc.destroy(session);
 }
 
@@ -287,7 +308,11 @@ pub fn fillSnapshot(session: *Session, buf: []u8) !i32 {
     // The cursor's rows: the one it left and the one it's on, drawn again
     // with it (a ligature run ends at the cursor).
     const at: ?[2]usize = if (state.cursor.viewport) |vp| .{ vp.x, vp.y } else null;
+    // Those rows are drawn again even when they look as they did.
+    var cursor_rows: [2]?usize = .{ null, null };
     if (!std.meta.eql(at, session.shown_cursor)) {
+        if (session.shown_cursor) |p| cursor_rows[0] = p[1];
+        if (at) |p| cursor_rows[1] = p[1];
         const range = state.rowDataRange();
         const row_dirty = state.row_data.items(.dirty)[range.start..range.end];
         for ([_]?[2]usize{ session.shown_cursor, at }) |cursor_at| {
@@ -369,19 +394,57 @@ pub fn fillSnapshot(session: *Session, buf: []u8) !i32 {
     var offset: usize = header_bytes;
     var row_count: i32 = 0;
 
+    // What the view's rows show, to send only what changed: a row the program
+    // rewrote as it was isn't sent, one that only moved is sent as where it was.
+    const serials = rows.items(.serial)[range.start..range.end];
+    const pins = rows.items(.pin)[range.start..range.end];
+    const shown = session.shown_rows.items;
+    const known = shown.len == cells_of.len;
+    try session.next_rows.resize(alloc, cells_of.len);
+    const next = session.next_rows.items;
+    const look = lookHash(state);
+    var shift: isize = 0;
+
     for (cells_of, 0..) |row_cells, y| {
         const was_dirty = row_dirty[y];
         row_dirty[y] = false;
-        if (dirty != .full and !was_dirty) continue;
+        if (dirty != .full and !was_dirty) {
+            next[y] = if (known) shown[y] else .{ .serial = 0, .y = 0, .hash = 0 };
+            continue;
+        }
+
+        const sel = selections[y];
+        next[y] = .{ .serial = serials[y], .y = @intCast(pins[y].y), .hash = rowHash(row_cells, sel, look) };
+        const moved_from: ?usize = moved: {
+            if (!known or y == cursor_rows[0] or y == cursor_rows[1]) break :moved null;
+            // Rows scroll together: by as many as the row before, most likely.
+            const guess = @as(isize, @intCast(y)) + shift;
+            if (guess >= 0 and guess < shown.len and std.meta.eql(shown[@intCast(guess)], next[y])) break :moved @intCast(guess);
+            for (shown, 0..) |row, from| {
+                if (std.meta.eql(row, next[y])) break :moved from;
+            }
+            break :moved null;
+        };
+        if (moved_from) |from| shift = @as(isize, @intCast(from)) - @as(isize, @intCast(y));
+        // As it was, where it was: nothing to send.
+        if (moved_from == y) continue;
+
+        if (offset + row_header_bytes > buf.len) return error.NoSpace;
+        putI32(buf, offset, @intCast(y));
+        putI32(buf, offset + 4, if (sel) |s| @intCast(s[0]) else -1);
+        putI32(buf, offset + 8, if (sel) |s| @intCast(s[1]) else -1);
+        if (moved_from) |from| {
+            putI32(buf, offset + 12, 0);
+            putI32(buf, offset + 16, @intCast(from));
+            offset += row_header_bytes;
+            row_count += 1;
+            continue;
+        }
+        putI32(buf, offset + 16, -1);
 
         const cells_offset = offset + row_header_bytes;
         const text_offset = cells_offset + cols * cell_record_bytes;
         if (text_offset > buf.len) return error.NoSpace;
-
-        putI32(buf, offset, @intCast(y));
-        const sel = selections[y];
-        putI32(buf, offset + 4, if (sel) |s| @intCast(s[0]) else -1);
-        putI32(buf, offset + 8, if (sel) |s| @intCast(s[1]) else -1);
 
         const text_cap = (buf.len - text_offset) / 2;
         const text: []u16 = @as([*]u16, @ptrCast(@alignCast(buf.ptr + text_offset)))[0..text_cap];
@@ -464,9 +527,37 @@ pub fn fillSnapshot(session: *Session, buf: []u8) !i32 {
         row_count += 1;
     }
 
+    std.mem.swap(std.ArrayList(Shown), &session.shown_rows, &session.next_rows);
     state.dirty = .false;
     putI32(buf, 40, row_count);
     return row_count;
+}
+
+/// A hash of the colors cells are drawn in: the palette and the defaults.
+fn lookHash(state: *const vt.RenderState) u64 {
+    var h = std.hash.Wyhash.init(0);
+    h.update(std.mem.asBytes(&state.colors.palette));
+    h.update(std.mem.asBytes(&state.colors.background));
+    h.update(std.mem.asBytes(&state.colors.foreground));
+    return h.final();
+}
+
+/// A hash of how a row looks: its cells (characters, styles), its selection
+/// and the colors it's drawn in.
+fn rowHash(row_cells: anytype, sel: ?[2]vt.size.CellCountInt, look: u64) u64 {
+    var h = std.hash.Wyhash.init(look);
+    const data = row_cells.slice();
+    const raws = data.items(.raw);
+    const graphemes = data.items(.grapheme);
+    const styles = data.items(.style);
+    h.update(std.mem.sliceAsBytes(raws));
+    for (raws, 0..) |cell, i| {
+        // Style data is undefined for default-styled cells.
+        if (cell.hasStyling()) h.update(std.mem.asBytes(&styles[i]));
+        if (cell.hasGrapheme()) h.update(std.mem.sliceAsBytes(graphemes[i]));
+    }
+    h.update(std.mem.asBytes(&sel));
+    return h.final();
 }
 
 pub fn hyperlinkUri(pin: vt.Pin) ?[]const u8 {
@@ -657,4 +748,72 @@ test "the cursor moving sends the rows it left and moved to" {
     session.stream.nextSlice("\x1b[3;1H");
     try std.testing.expectEqual(2, try fillSnapshot(session, &buf));
     try std.testing.expectEqual(0, std.mem.readInt(i32, buf[header_bytes..][0..4], .little));
+}
+
+/// The row records of the last snapshot in `buf`: each one's row and where it moved from.
+fn recordsOf(buf: []const u8, cols: usize) ![8][2]i32 {
+    var out: [8][2]i32 = @splat(.{ -9, -9 });
+    const count: usize = @intCast(headerOf(buf).rows);
+    var offset: usize = header_bytes;
+    for (0..count) |i| {
+        const at = struct {
+            fn f(b: []const u8, o: usize) i32 {
+                return std.mem.readInt(i32, b[o..][0..4], .little);
+            }
+        }.f;
+        out[i] = .{ at(buf, offset), at(buf, offset + 16) };
+        if (out[i][1] >= 0) {
+            offset += row_header_bytes;
+        } else {
+            const units: usize = @intCast(at(buf, offset + 12));
+            offset += row_header_bytes + cols * cell_record_bytes + units * 2;
+            if (offset % 4 != 0) offset += 2;
+        }
+    }
+    return out;
+}
+
+test "scrolled rows come as where they were, not again" {
+    const session = try create(10, 4, 100);
+    defer destroy(session);
+    var buf: testBuffer(10, 4) align(4) = undefined;
+    session.stream.nextSlice("1\r\n2\r\n3\r\n4\r\n5\r\n6\r\n7\r\n8");
+    _ = try fillSnapshot(session, &buf);
+    // The viewport up a row: what was on rows 0-2 is now on 1-3, and row 0 is
+    // new. (Row 3 had the cursor, which scrolled off: drawn again.)
+    session.term.scrollViewport(.{ .delta = -1 });
+    try std.testing.expectEqual(4, try fillSnapshot(session, &buf));
+    const records = try recordsOf(&buf, 10);
+    try std.testing.expectEqual([2]i32{ 0, -1 }, records[0]);
+    try std.testing.expectEqual([2]i32{ 1, 0 }, records[1]);
+    try std.testing.expectEqual([2]i32{ 2, 1 }, records[2]);
+    try std.testing.expectEqual([2]i32{ 3, -1 }, records[3]);
+    // And down again: all but the cursor's two rows moved back.
+    session.term.scrollViewport(.{ .delta = 1 });
+    _ = try fillSnapshot(session, &buf);
+    const back = try recordsOf(&buf, 10);
+    try std.testing.expectEqual([2]i32{ 0, 1 }, back[0]);
+    try std.testing.expectEqual([2]i32{ 1, 2 }, back[1]);
+}
+
+test "a row rewritten as it was isn't sent again" {
+    const session = try create(10, 3, 100);
+    defer destroy(session);
+    var buf: testBuffer(10, 3) align(4) = undefined;
+    session.stream.nextSlice("abc\r\nxyz\x1b[3;1H");
+    _ = try fillSnapshot(session, &buf);
+    // A TUI redrawing row 0 as it was, and changing row 1.
+    session.stream.nextSlice("\x1b[1;1Habc\x1b[2;1Hxyw\x1b[3;1H");
+    try std.testing.expectEqual(1, try fillSnapshot(session, &buf));
+    try std.testing.expectEqual([2]i32{ 1, -1 }, (try recordsOf(&buf, 10))[0]);
+}
+
+test "after the view lost its drawings, every row again" {
+    const session = try create(10, 3, 100);
+    defer destroy(session);
+    var buf: testBuffer(10, 3) align(4) = undefined;
+    session.stream.nextSlice("a");
+    _ = try fillSnapshot(session, &buf);
+    session.dirtyAll();
+    try std.testing.expectEqual(3, try fillSnapshot(session, &buf));
 }
