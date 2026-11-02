@@ -1186,14 +1186,10 @@ internal class GhosttyTerminalView(context: Context) : View(context) {
     val col = (x / cellWidth).toInt()
     val row = (y / cellHeight).toInt()
     if (col !in 0 until cols || row !in 0 until rows) return null
-    val link = linkAt(col, row) ?: return null
-    val at = row * cols + col
-    fun same(cell: Int) = linkAt(cell % cols, cell / cols) == link
-    var first = at
-    while (first > 0 && at - first < MAX_LINK_CELLS && same(first - 1)) first--
-    var last = at
-    while (last < rows * cols - 1 && last - at < MAX_LINK_CELLS && same(last + 1)) last++
-    return first..last
+    if (onLink == null || handle == 0L) return null
+    // One call, not one a neighboring cell: this runs on every move of the pointer.
+    val span = GhosttyVt.linkSpan(handle, col, row) ?: return null
+    return span[0]..span[1]
   }
 
   private fun drawHoverLink(canvas: Canvas) {
@@ -1406,8 +1402,6 @@ internal class GhosttyTerminalView(context: Context) : View(context) {
     const val MOUSE_LEFT = 1
     const val MOUSE_RIGHT = 2
     const val MOUSE_MIDDLE = 3
-    // How far a link runs either way from the pointer, at most.
-    const val MAX_LINK_CELLS = 2048
     // Same step as the iOS pinch-zoom (UITerminalView).
     const val PINCH_SCALE_STEP = 0.1f
     const val INITIAL_COLS = 80

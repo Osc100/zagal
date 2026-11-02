@@ -567,6 +567,70 @@ fn rowHash(row_cells: anytype, sel: ?[2]vt.size.CellCountInt, look: u64) u64 {
     return h.final();
 }
 
+/// The link at a viewport cell and the cells it covers, row-major: its OSC 8
+/// hyperlink, or else the http(s) URL written across the cell's line (soft
+/// wraps included). `uri` is the caller's (`alloc`).
+pub const Link = struct {
+    uri: []u8,
+    first: Cell,
+    last: Cell,
+
+    pub const Cell = struct { x: u32, y: u32 };
+};
+
+pub fn linkAt(session: *Session, col: i32, row: i32) !?Link {
+    var pin = session.viewportPin(col, row) orelse return null;
+    // A wide character's right half belongs to its left.
+    if (pin.rowAndCell().cell.wide == .spacer_tail and pin.x > 0) pin.x -= 1;
+    const screen = session.term.screens.active;
+    const cols: u32 = screen.pages.cols;
+    const rows: u32 = screen.pages.rows;
+
+    if (hyperlinkUri(pin)) |uri| {
+        // Its cells: the neighbors, either way, with the same link.
+        const at: u32 = @intCast(row * @as(i32, @intCast(cols)) + col);
+        const same = struct {
+            fn f(s: *Session, cell: u32, c: u32, link: []const u8) bool {
+                const p = s.viewportPin(@intCast(cell % c), @intCast(cell / c)) orelse return false;
+                const other = hyperlinkUri(p) orelse return false;
+                return std.mem.eql(u8, other, link);
+            }
+        }.f;
+        var first = at;
+        while (first > 0 and same(session, first - 1, cols, uri)) first -= 1;
+        var last = at;
+        while (last + 1 < cols * rows and same(session, last + 1, cols, uri)) last += 1;
+        return .{
+            .uri = try alloc.dupe(u8, uri),
+            .first = .{ .x = first % cols, .y = first / cols },
+            .last = .{ .x = last % cols, .y = last / cols },
+        };
+    }
+
+    const sel = screen.selectLine(.{
+        .pin = pin,
+        .whitespace = null,
+        .semantic_prompt_boundary = false,
+    }) orelse return null;
+    var line = try screen.selectionStringMap(alloc, .{ .sel = sel, .trim = false });
+    defer line.deinit(alloc);
+    for (0..line.map.count()) |i| {
+        const here = line.map.get(i) orelse continue;
+        if (here.node != pin.node or here.x != pin.x or here.y != pin.y) continue;
+        const url = urlAround(line.string, i) orelse return null;
+        const start = @intFromPtr(url.ptr) - @intFromPtr(line.string.ptr);
+        const first = viewportCell(screen, line.map.get(start)) orelse return null;
+        const last = viewportCell(screen, line.map.get(start + url.len - 1)) orelse return null;
+        return .{ .uri = try alloc.dupe(u8, url), .first = first, .last = last };
+    }
+    return null;
+}
+
+fn viewportCell(screen: anytype, pin: ?vt.Pin) ?Link.Cell {
+    const p = screen.pages.pointFromPin(.viewport, pin orelse return null) orelse return null;
+    return .{ .x = p.viewport.x, .y = p.viewport.y };
+}
+
 pub fn hyperlinkUri(pin: vt.Pin) ?[]const u8 {
     const page = pin.node.page();
     const cell = page.getRowAndCell(pin.x, pin.y).cell;
@@ -840,4 +904,25 @@ test "a selection's end moving sends only the rows it changed" {
     session.reselect();
     session.term.screens.active.clearSelection();
     try std.testing.expectEqual(4, try fillSnapshot(session, &buf));
+}
+
+test "a link and the cells it covers, wrapped or not" {
+    const session = try create(10, 3, 100);
+    defer destroy(session);
+    // "see https://e.co/abc" wraps onto row 1 at column 10.
+    session.stream.nextSlice("see https://e.co/abc now");
+    const link = (try linkAt(session, 6, 0)).?;
+    defer alloc.free(link.uri);
+    try std.testing.expectEqualStrings("https://e.co/abc", link.uri);
+    try std.testing.expectEqual(Link.Cell{ .x = 4, .y = 0 }, link.first);
+    try std.testing.expectEqual(Link.Cell{ .x = 9, .y = 1 }, link.last);
+    try std.testing.expectEqual(null, try linkAt(session, 1, 0));
+
+    // An OSC 8 hyperlink: its cells.
+    session.stream.nextSlice("\x1b[3;1Hx \x1b]8;;https://h.co\x1b\\here\x1b]8;;\x1b\\ y");
+    const osc = (try linkAt(session, 3, 2)).?;
+    defer alloc.free(osc.uri);
+    try std.testing.expectEqualStrings("https://h.co", osc.uri);
+    try std.testing.expectEqual(Link.Cell{ .x = 2, .y = 2 }, osc.first);
+    try std.testing.expectEqual(Link.Cell{ .x = 5, .y = 2 }, osc.last);
 }

@@ -141,6 +141,9 @@ internal object GhosttyVt {
    */
   external fun linkAt(handle: Long, col: Int, row: Int): ByteArray?
 
+  /** The cells the link at a viewport cell covers: [first, last], row-major (y * cols + x); null when none. */
+  external fun linkSpan(handle: Long, col: Int, row: Int): IntArray?
+
   /** Text a program copied (OSC 52) since the last call, as UTF-8, or null. */
   external fun takeClipboard(handle: Long): ByteArray?
 

@@ -340,8 +340,7 @@ fn selectionText(env: Env, _: c.jobject, handle: c.jlong) callconv(.c) c.jbyteAr
     return newBytes(env, out.written());
 }
 
-/// The link at a viewport cell: its OSC 8 hyperlink, or else the http(s) URL
-/// written across the cell's line (soft wraps included); null when neither.
+/// The link at a viewport cell (see Session's linkAt), or null.
 fn linkAt(
     env: Env,
     _: c.jobject,
@@ -350,26 +349,32 @@ fn linkAt(
     row: c.jint,
 ) callconv(.c) c.jbyteArray {
     const session = fromHandle(handle) orelse return null;
-    var pin = session.viewportPin(col, row) orelse return null;
-    // A wide character's right half belongs to its left.
-    if (pin.rowAndCell().cell.wide == .spacer_tail and pin.x > 0) pin.x -= 1;
-    if (grid.hyperlinkUri(pin)) |uri| return newBytes(env, uri);
+    const link = (grid.linkAt(session, col, row) catch return null) orelse return null;
+    defer alloc.free(link.uri);
+    return newBytes(env, link.uri);
+}
 
-    const screen = session.term.screens.active;
-    const sel = screen.selectLine(.{
-        .pin = pin,
-        .whitespace = null,
-        .semantic_prompt_boundary = false,
-    }) orelse return null;
-    var line = screen.selectionStringMap(alloc, .{ .sel = sel, .trim = false }) catch return null;
-    defer line.deinit(alloc);
-    for (0..line.map.count()) |i| {
-        const at = line.map.get(i) orelse continue;
-        if (at.node != pin.node or at.x != pin.x or at.y != pin.y) continue;
-        const url = grid.urlAround(line.string, i) orelse return null;
-        return newBytes(env, url);
-    }
-    return null;
+/// The cells the link at a viewport cell covers, as [first, last] in
+/// row-major viewport cells (y * cols + x), or null when there's none.
+fn linkSpan(
+    env: Env,
+    _: c.jobject,
+    handle: c.jlong,
+    col: c.jint,
+    row: c.jint,
+) callconv(.c) c.jintArray {
+    const session = fromHandle(handle) orelse return null;
+    const link = (grid.linkAt(session, col, row) catch return null) orelse return null;
+    defer alloc.free(link.uri);
+    const cols = session.term.screens.active.pages.cols;
+    const span = [2]c.jint{
+        @intCast(link.first.y * cols + link.first.x),
+        @intCast(link.last.y * cols + link.last.x),
+    };
+    const out = jni(env).NewIntArray.?(env, 2);
+    if (out == null) return null;
+    jni(env).SetIntArrayRegion.?(env, out, 0, 2, &span);
+    return out;
 }
 
 /// Text a program copied (OSC 52) since the last call, or null.
@@ -583,6 +588,7 @@ const methods = [_]c.JNINativeMethod{
     method("clearSelection", "(J)V", &clearSelection),
     method("selectionText", "(J)[B", &selectionText),
     method("linkAt", "(JII)[B", &linkAt),
+    method("linkSpan", "(JII)[I", &linkSpan),
     method("takeClipboard", "(J)[B", &takeClipboard),
     method("setClipboardWrite", "(JZ)V", &setClipboardWrite),
     method("isPasteSafe", "([B)Z", &isPasteSafe),
