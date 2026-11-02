@@ -49,6 +49,7 @@ const flag_wide: u16 = 1 << 7;
 const flag_spacer: u16 = 1 << 8;
 const flag_fg_default: u16 = 1 << 9;
 const flag_bg_none: u16 = 1 << 10;
+const flag_overline: u16 = 1 << 11;
 
 pub const header_bytes = 19 * 4;
 const row_header_bytes = 4 * 4;
@@ -240,6 +241,7 @@ fn styleFlags(style: vt.Style) u16 {
     if (style.flags.strikethrough) flags |= flag_strikethrough;
     if (style.flags.inverse) flags |= flag_inverse;
     if (style.flags.invisible) flags |= flag_invisible;
+    if (style.flags.overline) flags |= flag_overline;
     return flags;
 }
 
@@ -575,4 +577,20 @@ test "an emoji with VS16 is two cells wide, also after a reset" {
     try std.testing.expectEqual(3, session.term.screens.active.cursor.x);
     session.stream.nextSlice("\x1bc❤️X");
     try std.testing.expectEqual(3, session.term.screens.active.cursor.x);
+}
+
+test "an overlined cell says so" {
+    const session = try create(10, 3, 100);
+    defer destroy(session);
+    var buf: testBuffer(10, 3) align(4) = undefined;
+    session.stream.nextSlice("\x1b[53mO\x1b[55mx");
+    _ = try fillSnapshot(session, &buf);
+    const cells = header_bytes + row_header_bytes;
+    const flags = struct {
+        fn f(b: []const u8, col: usize) u16 {
+            return std.mem.readInt(u16, b[cells + col * cell_record_bytes + 12 ..][0..2], .little);
+        }
+    }.f;
+    try std.testing.expect(flags(&buf, 0) & flag_overline != 0);
+    try std.testing.expect(flags(&buf, 1) & flag_overline == 0);
 }

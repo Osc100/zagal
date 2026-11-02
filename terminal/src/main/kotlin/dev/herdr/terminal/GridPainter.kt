@@ -308,6 +308,9 @@ internal class GridPainter(private val context: Context) {
         if (cellFlags[c] and FLAG_UNDERLINE != 0) {
           drawUnderline(canvas, cellUnderline[c], cellUnderlineColor[c], cx, span, bottom, paint)
         }
+        if (cellFlags[c] and FLAG_OVERLINE != 0) {
+          canvas.drawRect(cx, top, cx + span, top + underlineThickness, paint)
+        }
         if (cellFlags[c] and FLAG_STRIKETHROUGH != 0) {
           val mid = top + cellHeight / 2f
           canvas.drawRect(cx, mid - underlineThickness / 2, cx + span, mid + underlineThickness / 2, paint)
@@ -560,6 +563,7 @@ internal class GridPainter(private val context: Context) {
     const val FLAG_SPACER = 1 shl 8
     const val FLAG_FG_DEFAULT = 1 shl 9
     const val FLAG_BG_NONE = 1 shl 10
+    const val FLAG_OVERLINE = 1 shl 11
     const val STYLE_FLAGS = FLAG_BOLD or FLAG_ITALIC or FLAG_FAINT
   }
 }

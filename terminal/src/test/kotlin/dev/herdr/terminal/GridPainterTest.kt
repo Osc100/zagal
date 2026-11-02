@@ -26,4 +26,12 @@ class GridPainterTest {
     assertTrue(share(grid.cellPixels(2, 1), Grid.BG, tolerance = 0) > 0.99)
     assertTrue(share(grid.cellPixels(0, 0), Grid.BG, tolerance = 0) > 0.99)
   }
+
+  @Test
+  fun anOverlineRunsAlongTheCellsTop() {
+    val grid = Grid()
+    grid.draw(0, cells("ab", flags = GridPainter.FLAG_OVERLINE))
+    val top = (0 until (2 * grid.painter.cellWidth).toInt()).map { grid.bitmap.getPixel(it, 0) }
+    assertTrue(share(top, Grid.FG, tolerance = 30) > 0.95)
+  }
 }
