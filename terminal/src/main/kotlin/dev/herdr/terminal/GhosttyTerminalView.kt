@@ -120,6 +120,8 @@ internal class GhosttyTerminalView(context: Context) : View(context) {
   private val cursorGlyph = CharArray(4)
   private var cursorGlyphLength = 0
   private var cursorGlyphFlags = 0
+  // Text an input method is composing (CJK), shown at the cursor until it's committed.
+  private var preedit = ""
 
   // The cursor is an onDraw overlay, so blinking only replays the recorded
   // rows; the grid is untouched.
@@ -930,7 +932,12 @@ internal class GhosttyTerminalView(context: Context) : View(context) {
       for (node in rowNodes) if (node != null && node.hasDisplayList()) canvas.drawRenderNode(node)
     }
     drawHoverLink(canvas)
-    drawCursor(canvas)
+    // While composing, the text being composed stands where the cursor is.
+    if (preedit.isNotEmpty() && cursorX >= 0 && cursorY >= 0) {
+      painter.drawPreedit(canvas, preedit, cursorX, cursorY, cols)
+    } else {
+      drawCursor(canvas)
+    }
     drawSelectionHandles(canvas)
     drawScrollIndicator(canvas)
     drawJumpToBottomChip(canvas)
@@ -1279,11 +1286,32 @@ internal class GhosttyTerminalView(context: Context) : View(context) {
     return true
   }
 
+  private fun setPreedit(text: String) {
+    if (text == preedit) return
+    preedit = text
+    invalidate()
+  }
+
   private inner class TerminalInputConnection :
     BaseInputConnection(this@GhosttyTerminalView, false) {
     override fun commitText(text: CharSequence, newCursorPosition: Int): Boolean {
+      setPreedit("")
       sendText(text)
       return super.commitText("", newCursorPosition)
+    }
+
+    // Composing (CJK): shown at the cursor, sent once committed. Nothing goes
+    // to the program meanwhile, so it never sees half a word.
+    override fun setComposingText(text: CharSequence, newCursorPosition: Int): Boolean {
+      setPreedit(text.toString())
+      return true
+    }
+
+    override fun finishComposingText(): Boolean {
+      val text = preedit
+      setPreedit("")
+      if (text.isNotEmpty()) sendText(text)
+      return true
     }
 
     override fun deleteSurroundingText(beforeLength: Int, afterLength: Int): Boolean {

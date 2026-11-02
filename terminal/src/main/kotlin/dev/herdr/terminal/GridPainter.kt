@@ -462,6 +462,34 @@ internal class GridPainter(private val context: Context) {
     }
   }
 
+  /**
+   * Text being composed in an input method (CJK), at cell ([x], [y]) over
+   * the grid: each character in a cell of its own (two when wide), on the
+   * background, underlined, in the default foreground, as ghostty draws it.
+   * Characters past the row's end ([cols]) aren't drawn.
+   */
+  fun drawPreedit(canvas: Canvas, text: CharSequence, x: Int, y: Int, cols: Int) {
+    val top = (y * cellHeight).toFloat()
+    val bottom = top + cellHeight
+    var col = x
+    var i = 0
+    while (i < text.length && col < cols) {
+      val codepoint = Character.codePointAt(text, i)
+      val units = Character.charCount(codepoint)
+      val paint = paintFor(codepoint, 0)
+      paint.color = defaultFg
+      val wide = paint.measureText(text, i, i + units) > cellWidth * 1.5f && col + 1 < cols
+      val span = if (wide) cellWidth * 2 else cellWidth
+      val left = col * cellWidth
+      fillPaint.color = defaultBg
+      canvas.drawRect(left, top, left + span, bottom, fillPaint)
+      canvas.drawText(text, i, i + units, left, top + baseline, paint)
+      canvas.drawRect(left, bottom - underlineThickness, left + span, bottom, paint)
+      col += if (wide) 2 else 1
+      i += units
+    }
+  }
+
   companion object {
     /**
      * How the cursor shows, as ghostty decides it ([style] the program's), or
