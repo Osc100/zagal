@@ -53,6 +53,9 @@ internal class GhosttyTerminalView(context: Context) : View(context) {
   var onInputBytes: ((ByteArray) -> Unit)? = null
   var onGridResize: ((cols: Int, rows: Int) -> Unit)? = null
 
+  /** A link Ctrl+tapped (OSC 8 or a written http(s) URL), for the host to open. */
+  var onLink: ((String) -> Unit)? = null
+
   /** Sticky-modifier source for accessory-bar keys and IME text (optional). */
   var accessoryBar: TerminalAccessoryBar? = null
 
@@ -117,6 +120,8 @@ internal class GhosttyTerminalView(context: Context) : View(context) {
   private var dragBiasRows = 0
   private var lastPressCol = 0
   private var lastPressRow = 0
+  // The link under the long press, offered as "Open link" until the selection ends.
+  private var pressedLink: String? = null
   private val handlePaint = Paint(Paint.ANTI_ALIAS_FLAG)
   private val handleRadius = HANDLE_RADIUS_DP * resources.displayMetrics.density
   private val magnifier = Magnifier.Builder(this).build()
@@ -183,6 +188,13 @@ internal class GhosttyTerminalView(context: Context) : View(context) {
       override fun onDown(e: MotionEvent) = true
 
       override fun onSingleTapUp(e: MotionEvent): Boolean {
+        // Ctrl+tap (a keyboard's Ctrl, or the key bar's) opens the link under it;
+        // a long press offers it as "Open link".
+        val sticky = accessoryBar?.stickyMetaState() ?: 0
+        if ((e.metaState or sticky) and KeyEvent.META_CTRL_ON != 0 && openLinkAt(e.x, e.y)) {
+          if (sticky and KeyEvent.META_CTRL_ON != 0) accessoryBar?.consumeSticky()
+          return true
+        }
         if (scrolledBack) {
           val (cx, cy) = jumpChipCenter()
           val slop = JUMP_CHIP_RADIUS_DP * 1.5f * resources.displayMetrics.density
@@ -205,6 +217,7 @@ internal class GhosttyTerminalView(context: Context) : View(context) {
         if (handle == 0L || finished || scaleDetector.isInProgress) return
         lastPressCol = (e.x / cellWidth).toInt().coerceIn(0, cols - 1)
         lastPressRow = (e.y / cellHeight).toInt().coerceIn(0, rows - 1)
+        pressedLink = linkAt(lastPressCol, lastPressRow)
         performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
         selectionMode = GhosttyVt.selectWord(handle, lastPressCol, lastPressRow)
         scheduleFrame()
@@ -392,6 +405,23 @@ internal class GhosttyTerminalView(context: Context) : View(context) {
   }
 
   // ── Session I/O ──
+
+  /** Hands the link under ([x], [y]) to [onLink]; false when there's none. */
+  private fun openLinkAt(x: Float, y: Float): Boolean {
+    if (cellWidth <= 0f || cellHeight <= 0) return false
+    val col = (x / cellWidth).toInt()
+    val row = (y / cellHeight).toInt()
+    if (col !in 0 until cols || row !in 0 until rows) return false
+    val link = linkAt(col, row) ?: return false
+    onLink?.invoke(link)
+    return true
+  }
+
+  /** The link at a viewport cell, when the host takes links. */
+  private fun linkAt(col: Int, row: Int): String? {
+    if (onLink == null || handle == 0L) return null
+    return GhosttyVt.linkAt(handle, col, row)?.let { String(it, Charsets.UTF_8) }
+  }
 
   /** Feed PTY output into the grid. */
   fun write(data: ByteArray) {
@@ -662,6 +692,7 @@ internal class GhosttyTerminalView(context: Context) : View(context) {
   private fun clearSelection() {
     if (handle != 0L) GhosttyVt.clearSelection(handle)
     selectionMode = false
+    pressedLink = null
     draggingHandle = HANDLE_NONE
     actionMode?.finish()
     scheduleFrame()
@@ -722,6 +753,7 @@ internal class GhosttyTerminalView(context: Context) : View(context) {
     actionMode = startActionMode(
       object : ActionMode.Callback2() {
         override fun onCreateActionMode(mode: ActionMode, menu: Menu): Boolean {
+          menu.add(Menu.NONE, MENU_OPEN_LINK, 0, "Open link")
           menu.add(Menu.NONE, MENU_COPY, 0, android.R.string.copy)
           menu.add(Menu.NONE, MENU_PASTE, 1, android.R.string.paste)
           menu.add(Menu.NONE, MENU_SELECT_ALL, 2, android.R.string.selectAll)
@@ -729,12 +761,18 @@ internal class GhosttyTerminalView(context: Context) : View(context) {
         }
 
         override fun onPrepareActionMode(mode: ActionMode, menu: Menu): Boolean {
+          menu.findItem(MENU_OPEN_LINK)?.isVisible = pressedLink != null
           menu.findItem(MENU_COPY)?.isVisible = selectionMode
           return true
         }
 
         override fun onActionItemClicked(mode: ActionMode, item: MenuItem): Boolean {
           when (item.itemId) {
+            MENU_OPEN_LINK -> {
+              val link = pressedLink
+              clearSelection()
+              if (link != null) onLink?.invoke(link)
+            }
             MENU_COPY -> copySelection()
             MENU_PASTE -> requestPaste()
             MENU_SELECT_ALL -> selectAllContent()
@@ -1269,6 +1307,7 @@ internal class GhosttyTerminalView(context: Context) : View(context) {
     const val HANDLE_HIT_SLOP_DP = 24f
     const val HANDLE_COLOR = 0xFF4C8DF5.toInt()
 
+    const val MENU_OPEN_LINK = 4
     const val MENU_COPY = 1
     const val MENU_PASTE = 2
     const val MENU_SELECT_ALL = 3
