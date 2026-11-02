@@ -44,11 +44,14 @@ internal class GridPainter(private val context: Context) {
   private val drawable = HashMap<Int, Boolean>()
   private val fillPaint = Paint()
   private val cursorPaint = Paint()
+  private val sprites = Sprites()
   var cellWidth = 0f
     private set
   var cellHeight = 0
     private set
   private var baseline = 0f
+  // Box drawing's line thickness, in whole pixels: the font's underline's, as ghostty's.
+  private var boxThickness = 1
   val underlineThickness = max(1f, resources.displayMetrics.density)
   // Double, curly, dotted and dashed underlines, and colored ones.
   private val decorationPaint = Paint(Paint.ANTI_ALIAS_FLAG)
@@ -112,6 +115,7 @@ internal class GridPainter(private val context: Context) {
     cellWidth = textPaint.measureText("M")
     cellHeight = ceil(metrics.descent - metrics.ascent).toInt()
     baseline = -metrics.ascent
+    boxThickness = max(1, textPaint.underlineThickness.roundToInt())
   }
 
   /**
@@ -290,7 +294,7 @@ internal class GridPainter(private val context: Context) {
       if (flags and FLAG_FAINT != 0) paint.alpha = 160
       val x = col * cellWidth
       if (end == col + 1) {
-        if (!drawBlock(canvas, codepoint, col, top, bottom, paint)) {
+        if (!drawSprite(canvas, codepoint, col, top, paint)) {
           canvas.drawText(rowChars, cellTextOff[col], len, x, top + baseline, paint)
         }
       } else {
@@ -336,44 +340,14 @@ internal class GridPainter(private val context: Context) {
   }
 
   /**
-   * A block element (U+2580–259F: ▀ █ ▐ ▛ ░ …) as rectangles on the cell's own
-   * pixel edges, as ghostty draws them: a font's glyph leaves gaps between
-   * cells, which split pictures made of them (Claude Code's logo). False for
-   * other characters.
+   * [codepoint] as a shape on cell [col]'s pixels ([Sprites]: box drawing,
+   * blocks, braille, powerline, …); false for characters drawn from a font.
    */
-  private fun drawBlock(canvas: Canvas, codepoint: Int, col: Int, top: Float, bottom: Float, paint: Paint): Boolean {
-    if (codepoint !in 0x2580..0x259F) return false
-    val left = (col * cellWidth).roundToInt().toFloat()
-    val right = ((col + 1) * cellWidth).roundToInt().toFloat()
-    // A part of the cell, in eighths across and down.
-    fun part(x0: Int, y0: Int, x1: Int, y1: Int) = canvas.drawRect(
-      left + ((right - left) * x0 / 8).roundToInt(), top + ((bottom - top) * y0 / 8).roundToInt(),
-      left + ((right - left) * x1 / 8).roundToInt(), top + ((bottom - top) * y1 / 8).roundToInt(),
-      paint,
-    )
-    when (codepoint) {
-      0x2580 -> part(0, 0, 8, 4)
-      in 0x2581..0x2588 -> part(0, 8 - (codepoint - 0x2580), 8, 8)
-      in 0x2589..0x258F -> part(0, 0, 8 - (codepoint - 0x2588), 8)
-      0x2590 -> part(4, 0, 8, 8)
-      in 0x2591..0x2593 -> {
-        // Shades: the whole cell, a quarter, half or three quarters as strong.
-        val alpha = paint.alpha
-        paint.alpha = alpha * (codepoint - 0x2590) / 4
-        part(0, 0, 8, 8)
-        paint.alpha = alpha
-      }
-      0x2594 -> part(0, 0, 8, 1)
-      0x2595 -> part(7, 0, 8, 8)
-      else -> {
-        val quadrants = QUADRANTS[codepoint - 0x2596]
-        if (quadrants and 1 != 0) part(0, 0, 4, 4)
-        if (quadrants and 2 != 0) part(4, 0, 8, 4)
-        if (quadrants and 4 != 0) part(0, 4, 4, 8)
-        if (quadrants and 8 != 0) part(4, 4, 8, 8)
-      }
-    }
-    return true
+  private fun drawSprite(canvas: Canvas, codepoint: Int, col: Int, top: Float, paint: Paint): Boolean {
+    if (!Sprites.covers(codepoint)) return false
+    val left = (col * cellWidth).roundToInt()
+    val right = ((col + 1) * cellWidth).roundToInt()
+    return sprites.draw(canvas, codepoint, left, top.toInt(), right - left, cellHeight, boxThickness, paint)
   }
 
   /**
@@ -481,7 +455,7 @@ internal class GridPainter(private val context: Context) {
         val codepoint = Character.codePointAt(glyph, 0)
         val paint = paintFor(codepoint, glyphFlags)
         paint.color = defaultBg
-        if (!drawBlock(canvas, codepoint, x, top, bottom, paint)) {
+        if (!drawSprite(canvas, codepoint, x, top, paint)) {
           canvas.drawText(glyph, 0, glyphLength, left, top + baseline, paint)
         }
       }
@@ -506,10 +480,6 @@ internal class GridPainter(private val context: Context) {
 
     // Below this, selected text takes a default color.
     private const val MIN_SELECTED_CONTRAST = 1.5
-
-    // ▖ ▗ ▘ ▙ ▚ ▛ ▜ ▝ ▞ ▟ (U+2596–259F): which quarters each fills
-    // (1 upper left, 2 upper right, 4 lower left, 8 lower right).
-    private val QUADRANTS = intArrayOf(4, 8, 1, 1 or 4 or 8, 1 or 8, 1 or 2 or 4, 1 or 2 or 8, 2, 2 or 4, 2 or 4 or 8)
 
     const val FONT_SIZE_DP = 14f
     // Same bounds and step as the iOS pinch-zoom (UITerminalView).
