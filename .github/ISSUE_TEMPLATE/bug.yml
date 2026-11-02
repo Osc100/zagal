@@ -1,0 +1,33 @@
+name: Bug report
+description: Something doesn't work
+labels: [bug]
+body:
+  - type: textarea
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what happened instead. Screenshots help.
+    validations:
+      required: true
+  - type: input
+    attributes:
+      label: Zagal version
+      description: At the bottom of Settings.
+    validations:
+      required: true
+  - type: input
+    attributes:
+      label: herdr-core version
+      description: "`hc --version` on the host."
+    validations:
+      required: true
+  - type: input
+    attributes:
+      label: Device and Android version
+      description: e.g. Pixel 9, Android 17
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: Logs
+      description: "`adb logcat` output around the problem, if you have it."
+      render: text

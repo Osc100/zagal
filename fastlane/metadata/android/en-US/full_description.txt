@@ -1,0 +1,15 @@
+<p>Zagal is an unofficial Android client for <a href="https://github.com/herdrdev/herdr-core">herdr-core</a> (<code>hc</code>), which runs programs and coding agents in terminals that stay alive after you leave. Zagal logs into your machines over SSH and shows those terminals on your phone or tablet, laid out like the herdr desktop app: spaces, tabs and an agents list.</p>
+
+<ul>
+<li><b>Agents</b>: every agent on every machine, grouped by working, blocked, done and idle.</li>
+<li><b>Spaces and tabs</b>: open, add and close them, as on the desktop.</li>
+<li><b>Terminal</b> built on ghostty's VT core: colors, mouse modes, scrollback, selection, paste and Nerd Font icons.</li>
+<li><b>Notifications</b> when an agent finishes or needs you, with a preview of its screen.</li>
+<li><b>Several hosts at once</b>, merged into one view.</li>
+<li><b>Tablets</b> get a sidebar beside the terminal.</li>
+<li><b>Themes</b>: herdr's or Material You.</li>
+</ul>
+
+<p>No account and no server in between: only SSH from your phone to your machines. The phone's key is sealed by the Android Keystore, and host keys are pinned when you trust them.</p>
+
+<p>Needs herdr-core and an SSH server on each machine. Zagal is not made by or affiliated with the herdr project.</p>

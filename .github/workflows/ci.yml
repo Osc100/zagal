@@ -1,0 +1,23 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: true
+      # JDK and Zig from mise.toml; also exports its env and tasks.
+      - uses: jdx/mise-action@v5
+      # Validates the wrapper jar and caches Gradle.
+      - uses: gradle/actions/setup-gradle@v6
+      - run: mise run test
+      - run: mise run build

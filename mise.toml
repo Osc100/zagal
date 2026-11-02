@@ -1,0 +1,21 @@
+[tools]
+java = "zulu-21"
+# Builds libghostty-vt from source (terminal/ghostty); ghostty pins the minor version.
+zig = "0.17.0"
+
+[env]
+# CI runners bring their own SDK; locally, Android Studio's default place.
+ANDROID_HOME = "{{ get_env(name='ANDROID_HOME', default=env.HOME ~ '/Android/Sdk') }}"
+_.path = ["{{ env.ANDROID_HOME }}/platform-tools", "{{ env.ANDROID_HOME }}/emulator"]
+
+[tasks.test]
+description = "Protocol and app unit tests"
+run = "./gradlew :core:jvmTest :app:testDebugUnitTest"
+
+[tasks.build]
+description = "Debug APK"
+run = "./gradlew :app:assembleDebug"
+
+[tasks.release]
+description = "Release APK, signed when ZAGAL_KEYSTORE and ZAGAL_PASSWORD are set (CI)"
+run = "./gradlew :app:assembleRelease"

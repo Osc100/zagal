@@ -1,0 +1,1 @@
+Unofficial herdr-core client: your agents' terminals over SSH

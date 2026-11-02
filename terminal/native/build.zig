@@ -1,0 +1,59 @@
+//! libherdrterminal.so: the JNI bridge (src/jni.zig) with ghostty's
+//! `ghostty-vt` Zig module compiled in, for one Android ABI. Gradle runs
+//! `zig build -Dtarget=<abi target>` per ABI, with ANDROID_NDK_HOME set.
+
+const std = @import("std");
+const android_ndk = @import("android_ndk");
+
+pub fn build(b: *std.Build) !void {
+    const target = b.standardTargetOptions(.{});
+    const optimize = b.standardOptimizeOption(.{});
+
+    // JNI and Android headers, translated from the NDK's sysroot.
+    const sysroot = try ndkSysroot(b);
+    const triple = switch (target.result.cpu.arch) {
+        .aarch64 => "aarch64-linux-android",
+        .x86_64 => "x86_64-linux-android",
+        else => return error.UnsupportedAbi,
+    };
+    const headers = b.addTranslateC(.{
+        .root_source_file = b.path("src/c.h"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = false,
+    });
+    headers.addSystemIncludePath(.{ .cwd_relative = b.pathJoin(&.{ sysroot, "usr", "include" }) });
+    headers.addSystemIncludePath(.{ .cwd_relative = b.pathJoin(&.{ sysroot, "usr", "include", triple }) });
+
+    // -Dsimd=false drops ghostty's C++ SIMD paths: plain Zig, nothing else to link.
+    const ghostty = b.dependency("ghostty", .{ .target = target, .optimize = optimize, .simd = false });
+
+    const mod = b.createModule(.{
+        .root_source_file = b.path("src/jni.zig"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+        .strip = optimize != .debug,
+    });
+    mod.addImport("c", headers.createModule());
+    mod.addImport("ghostty-vt", ghostty.module("ghostty-vt"));
+    // liblog lives under the API level's own directory.
+    const api = target.result.os.version_range.linux.android;
+    mod.addLibraryPath(.{ .cwd_relative = b.pathJoin(&.{ sysroot, "usr", "lib", triple, b.fmt("{d}", .{api}) }) });
+    mod.linkSystemLibrary("log", .{});
+
+    const lib = b.addLibrary(.{
+        .name = "herdrterminal",
+        .linkage = .dynamic,
+        .root_module = mod,
+    });
+    try android_ndk.addPaths(b, lib);
+    // Android 15+ devices require 16 KB page alignment.
+    lib.link_z_max_page_size = 16384;
+    b.installArtifact(lib);
+}
+
+fn ndkSysroot(b: *std.Build) ![]const u8 {
+    const ndk = b.graph.environ_map.get("ANDROID_NDK_HOME") orelse return error.AndroidNdkHomeNotSet;
+    return b.pathJoin(&.{ ndk, "toolchains", "llvm", "prebuilt", "linux-x86_64", "sysroot" });
+}

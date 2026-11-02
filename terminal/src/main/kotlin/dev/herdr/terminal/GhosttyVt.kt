@@ -1,0 +1,119 @@
+package dev.herdr.terminal
+
+import java.nio.ByteBuffer
+
+/**
+ * JNI bindings for libghostty-vt (see native/src/jni.zig, which registers
+ * these by name when the library loads).
+ *
+ * All functions must be called from the main thread; the native side keeps
+ * per-handle state without locking.
+ */
+internal object GhosttyVt {
+  init {
+    System.loadLibrary("herdrterminal")
+  }
+
+  /** Create a terminal session. Returns 0 on failure. */
+  external fun create(cols: Int, rows: Int, maxScrollback: Long): Long
+
+  external fun free(handle: Long)
+
+  /**
+   * Feed PTY output bytes through the VT parser. Returns query-response bytes
+   * the terminal wants written back to the PTY (DSR etc.), or null.
+   */
+  external fun write(handle: Long, data: ByteArray): ByteArray?
+
+  external fun resize(handle: Long, cols: Int, rows: Int, cellWidthPx: Int, cellHeightPx: Int)
+
+  /**
+   * Set the terminal's default colors. Colors use ghostty config syntax
+   * (hex with or without '#', X11 names); null clears back to the built-in
+   * default, invalid strings are logged and skipped. [palette] overrides
+   * entries by index on top of ghostty's default 256-color palette.
+   */
+  external fun setTheme(
+    handle: Long,
+    foreground: String?,
+    background: String?,
+    cursor: String?,
+    palette: Array<String?>?
+  )
+
+  /** Parse a ghostty-syntax color to ARGB, or 0 when invalid. */
+  external fun parseColor(color: String): Int
+
+  /** [parseColor], with null for a null or invalid color. */
+  fun colorOrNull(color: String?): Int? = color?.let(::parseColor)?.takeIf { it != 0 }
+
+  /** Scroll the viewport by [deltaRows]; negative is up (into scrollback). */
+  external fun scroll(handle: Long, deltaRows: Int)
+
+  external fun scrollToBottom(handle: Long)
+
+  /** Where a vertical swipe goes: 0 scrollback, 1 mouse wheel, 2 arrow keys. */
+  external fun scrollTarget(handle: Long): Int
+
+  /** [count] wheel notches at a pixel position, for the active mouse mode. */
+  external fun encodeWheel(
+    handle: Long,
+    up: Boolean,
+    count: Int,
+    x: Float,
+    y: Float,
+    screenWidth: Int,
+    screenHeight: Int,
+    cellWidth: Int,
+    cellHeight: Int
+  ): ByteArray?
+
+  /** Viewport scrollbar as [total, offset, len] rows, or null. */
+  external fun scrollbar(handle: Long): LongArray?
+
+  /**
+   * Update the render state and flatten dirty rows into [buffer] (direct,
+   * little-endian; layout documented in native/src/jni.zig). Returns the number
+   * of row records written, or -1 on error/too-small buffer.
+   */
+  external fun snapshot(handle: Long, buffer: ByteBuffer): Int
+
+  /**
+   * Encode a key event ([action]: 0 release / 1 press / 2 repeat) into the
+   * escape-sequence bytes to send to the PTY, or null when the key encodes
+   * to nothing under the terminal's active modes.
+   */
+  external fun encodeKey(
+    handle: Long,
+    keyCode: Int,
+    action: Int,
+    metaState: Int,
+    unshiftedCodepoint: Int,
+    utf8: ByteArray?
+  ): ByteArray?
+
+  /** Select the word at a viewport cell; false when there is nothing there. */
+  external fun selectWord(handle: Long, col: Int, row: Int): Boolean
+
+  external fun selectAll(handle: Long): Boolean
+
+  /** Install a linear selection between two viewport cells (inclusive). */
+  external fun setSelection(
+    handle: Long,
+    anchorCol: Int,
+    anchorRow: Int,
+    col: Int,
+    row: Int
+  ): Boolean
+
+  external fun clearSelection(handle: Long)
+
+  /** Active selection as UTF-8 (plain, unwrapped, trimmed), or null if none. */
+  external fun selectionText(handle: Long): ByteArray?
+
+  /** Conservative check: newlines / bracketed-paste escapes are unsafe. */
+  external fun isPasteSafe(data: ByteArray): Boolean
+
+  /** Encode clipboard bytes for the PTY (control-byte strip + mode-2004 wrap). */
+  external fun encodePaste(handle: Long, data: ByteArray): ByteArray?
+}

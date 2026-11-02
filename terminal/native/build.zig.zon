@@ -1,0 +1,13 @@
+.{
+    .name = .herdrterminal,
+    .version = "0.0.0",
+    .fingerprint = 0xa13b3aeaf8754888,
+    .minimum_zig_version = "0.17.0",
+    .dependencies = .{
+        // ghostty's source (the submodule): its `ghostty-vt` Zig module.
+        .ghostty = .{ .path = "../ghostty" },
+        // ghostty's helper pointing a build at the NDK's Bionic libc.
+        .android_ndk = .{ .path = "../ghostty/pkg/android-ndk" },
+    },
+    .paths = .{ "build.zig", "build.zig.zon", "src" },
+}

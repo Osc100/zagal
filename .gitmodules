@@ -1,0 +1,4 @@
+[submodule "terminal/ghostty"]
+	path = terminal/ghostty
+	url = https://github.com/ghostty-org/ghostty.git
+	shallow = true
