@@ -980,11 +980,20 @@ internal class GhosttyTerminalView(context: Context) : View(context) {
     super.onAttachedToWindow()
     // Shown again (a terminal kept while another was on screen): its rows'
     // drawings went with the window, so record them all before its first frame.
-    if (handle != 0L && rowNodes.any { it != null && !it.hasDisplayList() }) {
-      GhosttyVt.redraw(handle)
-      renderFrame()
-    }
+    rerecordLostRows()
     syncBlinkTimer()
+  }
+
+  /**
+   * Records every row again from the grid when the renderer let go of some
+   * rows' drawings: on leaving a window, or with the window's GPU resources
+   * while the app is in the background. Rows the program doesn't rewrite
+   * (a TUI's borders) would otherwise stay blank.
+   */
+  private fun rerecordLostRows() {
+    if (handle == 0L || rowNodes.none { it != null && !it.hasDisplayList() }) return
+    GhosttyVt.redraw(handle)
+    renderFrame()
   }
 
   override fun onDetachedFromWindow() {
@@ -1248,6 +1257,8 @@ internal class GhosttyTerminalView(context: Context) : View(context) {
     // Rows replay only on a hardware canvas: a software one (a View.draw into
     // a bitmap) gets the background and overlays.
     if (canvas.isHardwareAccelerated) {
+      // Back in front: the window's resources went in the background, the rows' drawings with them.
+      rerecordLostRows()
       for (node in rowNodes) if (node != null && node.hasDisplayList()) canvas.drawRenderNode(node)
     }
     drawHoverLink(canvas)
