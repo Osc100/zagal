@@ -68,6 +68,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.platform.testTag
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.herdr.mobile.SettingsViewModel
@@ -275,7 +276,7 @@ private fun HostsSection(vm: SettingsViewModel) {
         OutlinedTextField(
             target,
             { target = it },
-            Modifier.weight(1f),
+            Modifier.weight(1f).testTag("host-input"),
             label = { Text("Add a host") },
             placeholder = { Text("user@host or user@host:port") },
             singleLine = true,

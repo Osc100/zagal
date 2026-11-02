@@ -26,3 +26,8 @@ run = "./gradlew :app:assembleDebug"
 [tasks.release]
 description = "Release APK, signed when ZAGAL_KEYSTORE and ZAGAL_PASSWORD are set (CI)"
 run = "./gradlew :app:assembleRelease"
+
+[tasks.e2e]
+description = "End-to-end flows (Maestro) on the connected device or emulator, against a throwaway herdr-core"
+tools = { maestro = "cli-2.12.0" }
+run = "e2e/run.sh"

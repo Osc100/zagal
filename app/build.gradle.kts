@@ -40,6 +40,17 @@ android {
             manifestPlaceholders["scheme"] = "zagal-dev"
             buildConfigField("String", "SCHEME", "\"zagal-dev\"")
         }
+        // End-to-end runs (e2e/run.sh) clear its data every time: its own app,
+        // so a debug install keeps its hosts and its key.
+        create("e2e") {
+            initWith(getByName("debug"))
+            applicationIdSuffix = ".e2e"
+            versionNameSuffix = "-e2e"
+            resValue("string", "app_name", "Zagal e2e")
+            manifestPlaceholders["scheme"] = "zagal-e2e"
+            buildConfigField("String", "SCHEME", "\"zagal-e2e\"")
+            matchingFallbacks += "debug"
+        }
         release {
             resValue("string", "app_name", "Zagal")
             manifestPlaceholders["scheme"] = "zagal"

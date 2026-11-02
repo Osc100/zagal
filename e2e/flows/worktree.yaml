@@ -1,0 +1,37 @@
+# In a git checkout (e2e/run.sh makes ~/repo on the throwaway host): a new
+# worktree from the space's menu opens a space on it; removing it closes that
+# space. e2e/run.sh checks git's own list afterwards.
+appId: io.github.osc100.zagal.e2e
+name: worktree
+---
+- launchApp
+# The space opens on its agent (it needs you most): its first tab is the shell.
+- tapOn:
+    id: space-row
+    index: 0
+- tapOn:
+    id: tab
+    index: 0
+- tapOn:
+    point: 60%,40%
+- inputText: cd ~/repo
+- pressKey: Enter
+- waitForAnimationToEnd:
+    timeout: 2000
+- pressKey: Back
+- longPressOn:
+    id: space-row
+    index: 0
+- tapOn: New worktree
+- inputText: e2e-branch
+- tapOn: Create
+- extendedWaitUntil:
+    visible: e2e-branch
+    timeout: 30000
+- takeScreenshot: worktree
+- longPressOn: e2e-branch
+- tapOn: Remove worktree
+- tapOn: Remove
+- extendedWaitUntil:
+    notVisible: e2e-branch
+    timeout: 30000

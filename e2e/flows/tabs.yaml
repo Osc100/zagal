@@ -1,0 +1,38 @@
+# A second tab with +, renamed and closed from its menu (a long press).
+appId: io.github.osc100.zagal.e2e
+name: tabs
+---
+- launchApp
+# The app opens on what needs you most (the fake agent): open the space first.
+- tapOn:
+    id: space-row
+    index: 0
+- tapOn: New tab
+- tapOn: Terminal
+- extendedWaitUntil:
+    visible:
+      id: tab
+      index: 1
+    timeout: 20000
+- longPressOn:
+    id: tab
+    index: 1
+- tapOn: Rename
+- inputText: build
+- tapOn:
+    text: Rename
+    index: 0
+- extendedWaitUntil:
+    visible: build
+    timeout: 10000
+- takeScreenshot: tabs-renamed
+- longPressOn: build
+- tapOn: Close
+# Closing asks first (Settings' "Confirm before closing", on by default).
+- tapOn: Close tab
+- extendedWaitUntil:
+    notVisible: build
+    timeout: 10000
+- assertNotVisible:
+    id: tab
+    index: 1

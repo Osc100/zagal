@@ -46,6 +46,8 @@ import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.painter.Painter
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.testTagsAsResourceId
 import androidx.core.util.Consumer
 import androidx.fragment.app.FragmentActivity
 import androidx.lifecycle.compose.LifecycleResumeEffect
@@ -139,7 +141,8 @@ class MainActivity : FragmentActivity() {
                         bars.show(WindowInsetsCompat.Type.systemBars())
                     }
                 }
-                Surface(Modifier.fillMaxSize()) { if (loaded) App(main) }
+                // Test tags as resource ids: what end-to-end flows (e2e/) find things by.
+                Surface(Modifier.fillMaxSize().semantics { testTagsAsResourceId = true }) { if (loaded) App(main) }
             }
         }
     }

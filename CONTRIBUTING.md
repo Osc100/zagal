@@ -10,6 +10,13 @@ your change on a device or emulator; debug builds install beside the release
 app as "Zagal dev". [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) explains how
 the code is laid out.
 
+`mise run e2e` runs the end-to-end flows in `e2e/flows` (Maestro) on the
+device or emulator `adb` sees, against a throwaway host: a container
+(`e2e/host`) with sshd and herdr-core, reached through `adb reverse`. It needs
+podman or docker, and installs "Zagal e2e", an app of its own, so a debug
+install keeps its hosts. Agents in the flows are shells that report themselves
+as one; no real agent runs. `ZAGAL_E2E_HOLD=1` keeps the host up afterwards.
+
 ## Guidelines
 
 - Match the code around you: its naming, comments and idioms.

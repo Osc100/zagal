@@ -1,0 +1,20 @@
+# An agent (e2e/run.sh starts a fake one: sh reporting OSC 7501) pinned to
+# the top from its menu, then unpinned.
+appId: io.github.osc100.zagal.e2e
+name: pin
+---
+- launchApp
+- extendedWaitUntil:
+    visible: Fake agent
+    timeout: 20000
+- longPressOn: Fake agent
+- tapOn: Pin to the top
+- extendedWaitUntil:
+    visible: Pinned
+    timeout: 10000
+- takeScreenshot: pinned
+- longPressOn: Fake agent
+- tapOn: Unpin
+- extendedWaitUntil:
+    notVisible: Pinned
+    timeout: 10000

@@ -56,6 +56,7 @@ import androidx.compose.ui.graphics.painter.Painter
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -510,7 +511,7 @@ private fun LazyListScope.spaceRows(
                 drawLine(accent, Offset(0f, y), Offset(size.width, y), 2.dp.toPx())
             }
         }
-    Box(place) {
+    Box(place.testTag("space-row")) {
         when {
             rail -> RailRow(space.id == here, click, mark = { if (mark != null) StatusMark(mark, compact = true) }) {
                 SpaceAvatar(space.name, space.avatar, 18.dp)

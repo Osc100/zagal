@@ -1,0 +1,21 @@
+# The throwaway host the e2e flows connect to: sshd, git and herdr-core
+# (its official install, pinned), and a user whose logins can only run
+# `hc connect`. No volumes: everything a run makes goes with the container.
+FROM docker.io/library/alpine:3.22
+
+ARG HC_VERSION=0.1.15
+
+RUN apk add --no-cache openssh-server git curl \
+ && curl -fsSL https://releases.herdr.dev/core/install.sh \
+    | HC_VERSION=$HC_VERSION HC_INSTALL_DIR=/usr/local/bin sh \
+ && adduser -D -s /bin/sh e2e \
+ # Alpine makes accounts locked, which sshd refuses even for keys.
+ && sed -i 's/^e2e:!/e2e:*/' /etc/shadow \
+ && ssh-keygen -A
+
+COPY sshd_config /etc/ssh/sshd_config
+
+EXPOSE 22
+# The core runs for as long as the container: without systemd it would end
+# with whatever started it, the app's login, and take its terminals along.
+CMD ["/bin/sh", "-c", "su e2e -s /bin/sh -c 'exec herdr-core serve' & exec /usr/sbin/sshd -D -e"]

@@ -1,0 +1,34 @@
+# Add the throwaway host, trust its key, open a shell in a new space and type
+# into it. e2e/run.sh checks on the host that the line arrived: the grid is
+# drawn by ghostty, so the flow can't read it.
+appId: io.github.osc100.zagal.e2e
+name: connect
+env:
+  HOST: ${HOST}
+  MARK: ${MARK}
+---
+- launchApp
+- tapOn: Add a host
+- tapOn:
+    id: host-input
+- inputText: ${HOST}
+- tapOn: Add
+- tapOn: "It matches: trust and connect"
+- extendedWaitUntil:
+    visible: connected
+    timeout: 30000
+- tapOn: New space
+- tapOn: Terminal
+- extendedWaitUntil:
+    visible: ESC
+    timeout: 30000
+# Wait for the shell's prompt, then tap the grid to type into it.
+- waitForAnimationToEnd:
+    timeout: 3000
+- tapOn:
+    point: 60%,40%
+- inputText: echo ${MARK}
+- pressKey: Enter
+- waitForAnimationToEnd:
+    timeout: 2000
+- takeScreenshot: connect

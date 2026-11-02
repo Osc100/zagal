@@ -1,0 +1,9 @@
+# Only e2e, only by key, only `hc connect`. Any key: the app's is made on the
+# device and sealed there, and the port is published on 127.0.0.1 alone.
+# The quotes are escaped for sshd's own parsing of the command's arguments.
+AllowUsers e2e
+PasswordAuthentication no
+KbdInteractiveAuthentication no
+AuthorizedKeysFile none
+AuthorizedKeysCommand /bin/echo restrict,command=\"/usr/local/bin/hc connect\" %t %k
+AuthorizedKeysCommandUser nobody

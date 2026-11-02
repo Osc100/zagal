@@ -40,6 +40,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.selected
@@ -236,7 +237,7 @@ private fun TabStrip(space: Space, session: Session, address: String, vm: Termin
                     // A tab of our own (Material's has no long press), with the same semantics;
                     // a long press or a right click opens the desktop's tab menu.
                     Box(
-                        Modifier.heightIn(min = 40.dp).widthIn(max = 224.dp)
+                        Modifier.heightIn(min = 40.dp).widthIn(max = 224.dp).testTag("tab")
                             .semantics { selected = on }
                             .combinedClickable(role = Role.Tab) { tab.terminals.firstOrNull()?.let(vm::select) }
                             .rowMenu("Tab menu", onMenu = { menuFor = tab.id }),

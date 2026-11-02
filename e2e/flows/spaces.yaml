@@ -1,0 +1,34 @@
+# A space renamed from its menu, then a second one made and closed from its.
+appId: io.github.osc100.zagal.e2e
+name: spaces
+---
+- launchApp
+- longPressOn:
+    id: space-row
+    index: 0
+- tapOn: Rename
+- inputText: e2e-space
+- tapOn:
+    text: Rename
+    index: 0
+- extendedWaitUntil:
+    visible: e2e-space
+    timeout: 10000
+- tapOn: New space
+- tapOn: Terminal
+- extendedWaitUntil:
+    visible:
+      id: space-row
+      index: 1
+    timeout: 20000
+- longPressOn:
+    id: space-row
+    index: 1
+- tapOn: Close
+- tapOn: Close space
+- extendedWaitUntil:
+    notVisible:
+      id: space-row
+      index: 1
+    timeout: 10000
+- takeScreenshot: spaces
