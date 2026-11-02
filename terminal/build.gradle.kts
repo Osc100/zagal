@@ -7,9 +7,8 @@ plugins {
     alias(libs.plugins.android.library)
 }
 
-/** Each ABI's Zig target: the API level is minSdk, but x86_64 (emulators
- * only) needs 29, where Bionic first exports the TLS helper Zig's code uses. */
-val ZIG_TARGETS = mapOf("arm64-v8a" to "aarch64-linux-android.26", "x86_64" to "x86_64-linux-android.29")
+/** Each ABI's Zig target, at minSdk's API level. */
+val ZIG_TARGETS = mapOf("arm64-v8a" to "aarch64-linux-android.29", "x86_64" to "x86_64-linux-android.29")
 
 /** Where each ABI's `libherdrterminal.so` lands, for packaging. */
 val jniOut = layout.buildDirectory.dir("jniLibs")
@@ -20,7 +19,7 @@ android {
     // For its Bionic headers and libraries; there's no C/C++ compiled with it.
     ndkVersion = "27.1.12297006"
     defaultConfig {
-        minSdk = 26
+        minSdk = 29
         // The only ABIs built; 32-bit isn't supported.
         ndk {
             abiFilters += ZIG_TARGETS.keys

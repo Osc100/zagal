@@ -10,7 +10,6 @@ import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.Rect
 import android.graphics.Typeface
-import android.os.Build
 import android.os.SystemClock
 import android.provider.Settings
 import android.text.InputType
@@ -114,10 +113,7 @@ internal class GhosttyTerminalView(context: Context) : View(context) {
   private var lastPressRow = 0
   private val handlePaint = Paint(Paint.ANTI_ALIAS_FLAG)
   private val handleRadius = HANDLE_RADIUS_DP * resources.displayMetrics.density
-  // The constructor (deprecated in Q) keeps the platform's text-selection
-  // magnifier look; Magnifier.Builder's defaults differ.
-  @Suppress("DEPRECATION")
-  private val magnifier = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) Magnifier(this) else null
+  private val magnifier = Magnifier.Builder(this).build()
 
   private var defaultBg = 0xFF000000.toInt()
   private var defaultFg = 0xFFFFFFFF.toInt()
@@ -812,7 +808,7 @@ internal class GhosttyTerminalView(context: Context) : View(context) {
     val col = (x / cellWidth).toInt().coerceIn(0, cols - 1)
     val row = ((y / cellHeight).toInt() - dragBiasRows).coerceIn(0, rows - 1)
     GhosttyVt.setSelection(handle, dragAnchorCol, dragAnchorRow, col, row)
-    magnifier?.show(x, y)
+    magnifier.show(x, y)
     scheduleFrame()
   }
 
@@ -1107,7 +1103,7 @@ internal class GhosttyTerminalView(context: Context) : View(context) {
     if (scaleDetector.isInProgress) {
       if (draggingHandle != HANDLE_NONE) {
         draggingHandle = HANDLE_NONE
-        magnifier?.dismiss()
+        magnifier.dismiss()
       }
       // Keep the tap/long-press detector's stream consistent; its callbacks
       // are guarded on isInProgress.
@@ -1131,7 +1127,7 @@ internal class GhosttyTerminalView(context: Context) : View(context) {
         MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL ->
           if (draggingHandle != HANDLE_NONE) {
             draggingHandle = HANDLE_NONE
-            magnifier?.dismiss()
+            magnifier.dismiss()
             startTerminalActionMode()
             return true
           }
@@ -1164,11 +1160,6 @@ internal class GhosttyTerminalView(context: Context) : View(context) {
 
   private fun handleKeyEvent(event: KeyEvent): Boolean {
     if (handle == 0L || finished) return false
-    @Suppress("DEPRECATION")
-    if (event.action == KeyEvent.ACTION_MULTIPLE && event.characters != null) {
-      sendText(event.characters)
-      return true
-    }
     val action = when (event.action) {
       KeyEvent.ACTION_DOWN -> if (event.repeatCount > 0) 2 else 1
       KeyEvent.ACTION_UP -> 0
