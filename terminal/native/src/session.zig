@@ -181,6 +181,10 @@ pub fn create(cols: i32, rows: i32, max_scrollback: i64) !*Session {
     // libghostty's default is a steady cursor; blink by default like the
     // terminal apps users come from. DECSCUSR still overrides.
     t.setDefaultCursorBlink(true);
+    // On from the start (and after a reset), as in Ghostty and herdr-app:
+    // VS16 makes ✍️ two cells wide, ZWJ sequences one character.
+    t.modes.setDefault(.grapheme_cluster, true);
+    t.modes.set(.grapheme_cluster, true);
     return session;
 }
 
@@ -562,4 +566,13 @@ test "the snapshot carries the cell under the cursor" {
     _ = try fillSnapshot(session, &buf);
     try std.testing.expectEqual(1, at(&buf, 16));
     try std.testing.expectEqual('中', at(&buf, 17) & 0xFFFF);
+}
+
+test "an emoji with VS16 is two cells wide, also after a reset" {
+    const session = try create(10, 3, 100);
+    defer destroy(session);
+    session.stream.nextSlice("❤️X");
+    try std.testing.expectEqual(3, session.term.screens.active.cursor.x);
+    session.stream.nextSlice("\x1bc❤️X");
+    try std.testing.expectEqual(3, session.term.screens.active.cursor.x);
 }
