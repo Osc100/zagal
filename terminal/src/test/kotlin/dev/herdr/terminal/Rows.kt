@@ -51,10 +51,14 @@ fun cells(text: String, fg: Int = 0, bg: Int = 0, flags: Int = 0): List<Cell> =
 /** The app's JetBrains Mono (tests run in the terminal module's directory). */
 val jetBrainsMono: Typeface = Typeface.createFromFile(File("../app/src/main/res/font/jetbrains_mono_regular.ttf"))
 
-/** A painter in the app's JetBrains Mono, with a grid to draw on. */
+/**
+ * A painter in the app's JetBrains Mono, with a grid to draw on. Large: the
+ * tests' density is 1, where 14 dp would make cells 8 px wide.
+ */
 internal class Grid(val cols: Int = 20, val rows: Int = 4) {
   val painter = GridPainter(RuntimeEnvironment.getApplication()).apply {
     setTypeface(jetBrainsMono)
+    setFontSize(32f)
     allocate(cols, rows)
     defaultBg = BG
     defaultFg = FG

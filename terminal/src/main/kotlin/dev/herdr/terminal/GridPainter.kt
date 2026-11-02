@@ -420,9 +420,13 @@ internal class GridPainter(private val context: Context) {
   /** A cell's width in px: two columns for a wide character. */
   private fun cellSpan(flags: Int) = if (flags and FLAG_WIDE != 0) cellWidth * 2 else cellWidth
 
-  /** The cursor at cell ([x], [y]) in [style], in [color] (0: the default foreground). */
-  fun drawCursor(canvas: Canvas, x: Int, y: Int, style: Int, color: Int) {
+  /**
+   * The cursor at cell ([x], [y]) in [style], in [color] (0: the default
+   * foreground); [wide] on a wide character, over both its cells.
+   */
+  fun drawCursor(canvas: Canvas, x: Int, y: Int, style: Int, color: Int, wide: Boolean = false) {
     val left = x * cellWidth
+    val span = if (wide) cellWidth * 2 else cellWidth
     val top = (y * cellHeight).toFloat()
     val bottom = top + cellHeight
     cursorPaint.color = if (color != 0) color else defaultFg
@@ -433,17 +437,17 @@ internal class GridPainter(private val context: Context) {
       }
       CURSOR_STYLE_UNDERLINE -> {
         cursorPaint.style = Paint.Style.FILL
-        canvas.drawRect(left, bottom - underlineThickness * 2, left + cellWidth, bottom, cursorPaint)
+        canvas.drawRect(left, bottom - underlineThickness * 2, left + span, bottom, cursorPaint)
       }
       CURSOR_STYLE_BLOCK_HOLLOW -> {
         cursorPaint.style = Paint.Style.STROKE
         cursorPaint.strokeWidth = underlineThickness
-        canvas.drawRect(left, top, left + cellWidth, bottom, cursorPaint)
+        canvas.drawRect(left, top, left + span, bottom, cursorPaint)
       }
       else -> {
         cursorPaint.style = Paint.Style.FILL
         cursorPaint.alpha = 170
-        canvas.drawRect(left, top, left + cellWidth, bottom, cursorPaint)
+        canvas.drawRect(left, top, left + span, bottom, cursorPaint)
         cursorPaint.alpha = 255
       }
     }
@@ -468,7 +472,7 @@ internal class GridPainter(private val context: Context) {
     const val PUA_SUPPLEMENTARY_FIRST = 0xF0000
 
     // The snapshot's layout (jni.zig).
-    const val HEADER_BYTES = 56
+    const val HEADER_BYTES = 60
     const val ROW_HEADER_BYTES = 16
     const val CELL_RECORD_BYTES = 20
     const val MAX_CELL_TEXT_UNITS = 32

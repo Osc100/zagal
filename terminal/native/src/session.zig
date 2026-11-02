@@ -8,16 +8,18 @@
 //! per-cell JNI calls. See GhosttyTerminalView.kt for the reader side.
 //!
 //! Buffer layout:
-//!   header: 14 x i32
-//!     [0] version (3)          [1] dirty kind (0 none / 1 partial / 2 full)
+//!   header: 15 x i32
+//!     [0] version (4)          [1] dirty kind (0 none / 1 partial / 2 full)
 //!     [2] cols                 [3] rows
 //!     [4] default bg (ARGB)    [5] default fg (ARGB)
-//!     [6] cursor x or -1       [7] cursor y or -1
+//!     [6] cursor x or -1 (a wide character's first cell when on either)
+//!     [7] cursor y or -1
 //!     [8] cursor style         [9] cursor visible (0/1)
 //!     [10] row record count    [11] cursor blinking (0/1)
 //!     [12] cursor color (ARGB) or 0 when unconfigured
 //!     [13] held (0/1): synchronized output; the rows are the frame captured
 //!          when it began, and the caller should look again shortly
+//!     [14] cursor wide (0/1): on a wide character, two cells wide
 //!   row record:
 //!     i32 rowIndex, i32 selStartX or -1, i32 selEndX or -1, i32 textUnits
 //!     cells[cols] x 20 bytes:
@@ -45,7 +47,7 @@ const flag_spacer: u16 = 1 << 8;
 const flag_fg_default: u16 = 1 << 9;
 const flag_bg_none: u16 = 1 << 10;
 
-pub const header_bytes = 14 * 4;
+pub const header_bytes = 15 * 4;
 const row_header_bytes = 4 * 4;
 const cell_record_bytes = 20;
 // How long a synchronized-output hold may last before drawing resumes anyway.
@@ -251,14 +253,21 @@ pub fn fillSnapshot(session: *Session, buf: []u8) !i32 {
         .block_hollow => 3,
     };
 
+    // On a wide character's right half, the cursor is on the character: its first cell, two wide.
+    const wide = switch (cursor.cell.wide) {
+        .wide, .spacer_tail => true,
+        .narrow, .spacer_head => false,
+    };
+    const cursor_x: i32 = if (cursor.viewport) |vp| @as(i32, vp.x) - @intFromBool(vp.wide_tail) else -1;
+
     const header = [_]i32{
-        3,
+        4,
         @backingInt(dirty),
         @intCast(cols),
         @intCast(state.rows),
         argb(state.colors.background),
         argb(state.colors.foreground),
-        if (cursor.viewport) |vp| @intCast(vp.x) else -1,
+        cursor_x,
         if (cursor.viewport) |vp| @intCast(vp.y) else -1,
         if (cursor.viewport != null) visual else 1,
         @intFromBool(cursor.visible),
@@ -266,6 +275,7 @@ pub fn fillSnapshot(session: *Session, buf: []u8) !i32 {
         @intFromBool(cursor.blinking),
         cursor_color,
         @intFromBool(held),
+        @intFromBool(cursor.viewport != null and wide),
     };
     comptime std.debug.assert(header.len * 4 == header_bytes);
     for (header, 0..) |v, i| putI32(buf, i * 4, v);
@@ -435,13 +445,20 @@ fn testBuffer(comptime cols: usize, comptime rows: usize) type {
 }
 
 /// The header's dirty kind and row record count, after a snapshot.
-fn headerOf(buf: []const u8) struct { dirty: i32, rows: i32, bg: i32, fg: i32 } {
+fn headerOf(buf: []const u8) struct { dirty: i32, rows: i32, bg: i32, fg: i32, cursor_x: i32, cursor_wide: i32 } {
     const at = struct {
         fn f(b: []const u8, i: usize) i32 {
             return std.mem.readInt(i32, b[i * 4 ..][0..4], .little);
         }
     }.f;
-    return .{ .dirty = at(buf, 1), .rows = at(buf, 10), .bg = at(buf, 4), .fg = at(buf, 5) };
+    return .{
+        .dirty = at(buf, 1),
+        .rows = at(buf, 10),
+        .bg = at(buf, 4),
+        .fg = at(buf, 5),
+        .cursor_x = at(buf, 6),
+        .cursor_wide = at(buf, 14),
+    };
 }
 
 test "a snapshot of written text" {
@@ -472,4 +489,23 @@ test "every row again when the default colors change" {
     session.stream.nextSlice("\x1b[?5h");
     try std.testing.expectEqual(3, try fillSnapshot(session, &buf));
     try std.testing.expectEqual(argb(.{ .r = 0x5f, .g = 0, .b = 0 }), headerOf(&buf).fg);
+}
+
+test "the cursor on a wide character covers it, from its first cell" {
+    const session = try create(10, 3, 100);
+    defer destroy(session);
+    var buf: testBuffer(10, 3) align(4) = undefined;
+    // 中 takes columns 0 and 1, 文 2 and 3.
+    session.stream.nextSlice("中文");
+    for ([_]struct { col: u8, x: i32, wide: i32 }{
+        .{ .col = 1, .x = 0, .wide = 1 }, // on 中
+        .{ .col = 2, .x = 0, .wide = 1 }, // on 中's right half
+        .{ .col = 5, .x = 4, .wide = 0 }, // after both
+    }) |case| {
+        var move: [16]u8 = undefined;
+        session.stream.nextSlice(try std.fmt.bufPrint(&move, "\x1b[1;{d}H", .{case.col}));
+        _ = try fillSnapshot(session, &buf);
+        try std.testing.expectEqual(case.x, headerOf(&buf).cursor_x);
+        try std.testing.expectEqual(case.wide, headerOf(&buf).cursor_wide);
+    }
 }

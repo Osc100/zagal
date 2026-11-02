@@ -114,6 +114,8 @@ internal class GhosttyTerminalView(context: Context) : View(context) {
   private var cursorStyle = GridPainter.CURSOR_STYLE_BLOCK
   private var cursorVisible = false
   private var cursorBlinks = false
+  // On a wide character: two cells wide.
+  private var cursorWide = false
 
   // The cursor is an onDraw overlay, so blinking only replays the recorded
   // rows; the grid is untouched.
@@ -573,6 +575,7 @@ internal class GhosttyTerminalView(context: Context) : View(context) {
     // when its update began. Look again shortly; the hold ends with the
     // update, or on its own after a second.
     if (buf.int != 0) postDelayed(::scheduleFrame, HOLD_POLL_MS)
+    cursorWide = buf.int != 0
     syncBlinkTimer()
 
     // Everything changed: rows the snapshot leaves out show the background.
@@ -976,7 +979,7 @@ internal class GhosttyTerminalView(context: Context) : View(context) {
   private fun drawCursor(canvas: Canvas) {
     if (!cursorVisible || cursorX < 0 || cursorY < 0) return
     if (cursorBlinks && blinkScheduled && !blinkPhaseOn) return
-    painter.drawCursor(canvas, cursorX, cursorY, cursorStyle, cursorColor)
+    painter.drawCursor(canvas, cursorX, cursorY, cursorStyle, cursorColor, cursorWide)
   }
 
   // ── Mouse ──
