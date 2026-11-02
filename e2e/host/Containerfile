@@ -14,6 +14,8 @@ RUN apk add --no-cache openssh-server git curl \
  && ssh-keygen -A
 
 COPY sshd_config /etc/ssh/sshd_config
+# The test patterns e2e/scenarios draw with.
+COPY zt /usr/local/bin/zt
 
 EXPOSE 22
 # The core runs for as long as the container: without systemd it would end

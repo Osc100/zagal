@@ -6,9 +6,15 @@
 # `adb reverse`. No volumes: removing the container removes all of it, and
 # nothing here touches your sessions, your state or ~/.ssh.
 #
-#   mise run e2e                     # every flow in e2e/flows
+#   mise run e2e                     # every flow in e2e/flows, then every scenario
 #   mise run e2e e2e/flows/x.yaml
+#   mise run e2e e2e/flows/connect.yaml e2e/scenarios/x.sh
 #   ZAGAL_E2E_HOLD=1 mise run e2e    # then keep the host up to poke at by hand
+#   ZAGAL_E2E_APK=x.apk mise run e2e # that build instead of this tree's
+#
+# Scenarios (e2e/scenarios/*.sh) check what the app draws: they run a test
+# pattern in the connected terminal (zt, from e2e/host) and look at
+# screenshots (pixels.py). They need connect.yaml before them.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -23,6 +29,7 @@ engine=${ZAGAL_E2E_ENGINE:-$(command -v podman || command -v docker || true)}
 core() { "$engine" exec -u e2e "$host" hc "$@"; }
 on_host() { "$engine" exec -u e2e -w /home/e2e "$host" "$@"; }
 cleanup() {
+  keyboard_back 2>/dev/null || true
   "$engine" rm -f "$host" >/dev/null 2>&1 || true
   adb reverse --remove "tcp:$port" 2>/dev/null || true
 }
@@ -35,22 +42,75 @@ trap 'exit 143' TERM HUP
 "$engine" build -q -t zagal-e2e-host -f e2e/host/Containerfile e2e/host >/dev/null
 "$engine" run -d --rm --name "$host" -p "127.0.0.1:$port:22" zagal-e2e-host >/dev/null
 
-./gradlew -q :app:assembleE2e
-adb install -r app/build/outputs/apk/e2e/app-e2e.apk >/dev/null
+apk=${ZAGAL_E2E_APK:-}
+if [[ -z $apk ]]; then
+  ./gradlew -q :app:assembleE2e
+  apk=app/build/outputs/apk/e2e/app-e2e.apk
+fi
+adb install -r "$apk" >/dev/null
 adb shell pm clear "$app" >/dev/null
 # Android 17's local network permission; older versions have none to grant.
 adb shell pm grant "$app" android.permission.ACCESS_LOCAL_NETWORK 2>/dev/null || true
 adb reverse "tcp:$port" "tcp:$port" >/dev/null
 
+out=${ZAGAL_E2E_OUT:-build/e2e}
 flows() {
-  maestro test --test-output-dir "${ZAGAL_E2E_OUT:-build/e2e}" \
+  maestro test --test-output-dir "$out" \
     -e HOST="e2e@127.0.0.1:$port" -e MARK="$mark" "$@"
 }
 
-# Given flows: just those. Else all of them, in two steps: connecting first,
-# then the rest, once the host has what they need.
+# For scenarios: the terminal connecting opened, and what they do with it.
+term() { core ls | grep -oE '"address":"[^"]+"' | head -1 | cut -d'"' -f4; }
+# Runs a command in it, as if typed.
+send() { core send "$(term)" "$1" >/dev/null; }
+# The screen, as out/<scenario>-<name>.png.
+shot() { adb exec-out screencap -p > "$out/$scenario-$1.png"; }
+# The app to the background (home) and back in front.
+to_back() { adb shell input keyevent KEYCODE_HOME; }
+# Has Android let go of what it can, as when memory runs low. (Once at that
+# level, Android refuses it again: it's still there.)
+trim_memory() { adb shell am send-trim-memory "$app" COMPLETE >/dev/null 2>&1 || true; }
+# No soft keyboard until the scenario ends: its going and coming resizes the
+# terminal, which draws every row anyway. (Disabled, as Android shows it again
+# on its own when the app comes back.)
+no_keyboard() {
+  keyboard=$(adb shell settings get secure default_input_method | tr -d '\r')
+  adb shell ime disable "$keyboard" >/dev/null
+  sleep 1
+}
+keyboard_back() {
+  [[ -n ${keyboard:-} ]] || return 0
+  adb shell ime enable "$keyboard" >/dev/null
+  adb shell ime set "$keyboard" >/dev/null
+  keyboard=
+}
+to_front() { adb shell am start -n "$app/dev.herdr.mobile.MainActivity" >/dev/null 2>&1; }
+pixels() { python3 -I e2e/scenarios/pixels.py "$@"; }
+
+scenarios() {
+  mkdir -p "$out"
+  for script in "$@"; do
+    scenario=$(basename "$script" .sh)
+    echo "e2e: scenario $scenario"
+    # Each starts at a shell prompt: whatever the last left running, stopped.
+    core keys "$(term)" ctrl+c >/dev/null 2>&1 || true
+    send clear
+    # shellcheck source=/dev/null
+    source "$script"
+    keyboard_back
+  done
+}
+
+# Given flows and scenarios: just those, flows first. Else all of them, in
+# three steps: connecting first, then the rest of the flows, once the host
+# has what they need, then the scenarios.
 if [[ $# -gt 0 ]]; then
-  flows "$@"
+  given_flows=() given_scenarios=()
+  for arg in "$@"; do
+    if [[ $arg == *.sh ]]; then given_scenarios+=("$arg"); else given_flows+=("$arg"); fi
+  done
+  [[ ${#given_flows[@]} -eq 0 ]] || flows "${given_flows[@]}"
+  [[ ${#given_scenarios[@]} -eq 0 ]] || scenarios "${given_scenarios[@]}"
 else
   flows e2e/flows/connect.yaml
 
@@ -83,6 +143,8 @@ else
     exit 1
   fi
   echo "e2e: the worktree came and went"
+
+  scenarios e2e/scenarios/*.sh
 fi
 
 # Keep the throwaway host up for poking at by hand, until Ctrl-C.

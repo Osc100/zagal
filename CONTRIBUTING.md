@@ -16,6 +16,12 @@ device or emulator `adb` sees, against a throwaway host: a container
 podman or docker, and installs "Zagal e2e", an app of its own, so a debug
 install keeps its hosts. Agents in the flows are shells that report themselves
 as one; no real agent runs. `ZAGAL_E2E_HOLD=1` keeps the host up afterwards.
+Scenarios in `e2e/scenarios` check what the terminal draws where only the
+whole app can show it: they run a test pattern on the host (`e2e/host/zt`)
+and look at screenshots. Run one with the connect flow before it:
+`mise run e2e e2e/flows/connect.yaml e2e/scenarios/background.sh`. What a
+unit test can check (`mise run test`: the terminal's drawing on the JVM, the
+native session with `zig build test`) is checked there instead.
 
 ## Guidelines
 

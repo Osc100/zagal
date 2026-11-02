@@ -1,0 +1,26 @@
+#!/bin/sh
+# Test patterns the e2e scenarios (e2e/scenarios) run in a terminal: zt <name>.
+# Each draws, then holds the screen still, so a screenshot shows only what the
+# app drew of it.
+
+hold() { exec sleep 100000; }
+
+case "$1" in
+  bands)
+    # Every row a full-width band of color (an erase in the row's color), the
+    # cursor hidden: a screen nothing redraws.
+    rows=$(stty size | cut -d' ' -f1)
+    printf '\033[?25l\033[2J\033[H'
+    i=0
+    while [ "$i" -lt "$rows" ]; do
+      printf '\033[%sm\033[K\033[0m' $((41 + i % 6))
+      [ "$i" -lt $((rows - 1)) ] && printf '\n'
+      i=$((i + 1))
+    done
+    hold
+    ;;
+  *)
+    echo "zt: no pattern '$1'" >&2
+    exit 2
+    ;;
+esac
