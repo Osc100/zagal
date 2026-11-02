@@ -37,10 +37,16 @@ android {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
+    // Drawing tests run on the JVM: Robolectric with its native graphics,
+    // the bundled fonts as assets.
+    testOptions.unitTests.isIncludeAndroidResources = true
 }
 
 dependencies {
     implementation(libs.core.ktx)
+    testImplementation(kotlin("test-junit"))
+    testImplementation(libs.junit)
+    testImplementation(libs.robolectric)
 }
 
 // Zig comes from mise.toml; ghostty fetches its own Zig packages on the first build.
