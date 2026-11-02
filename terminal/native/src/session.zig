@@ -69,6 +69,8 @@ pub const Session = struct {
     pty_out: std.ArrayList(u8) = .empty,
     // When a synchronized-output hold began (monotonic ms), while it lasts.
     held_since: ?i64 = null,
+    // The default colors the last snapshot gave, which the view drew its rows in.
+    shown_colors: ?[2]vt.color.RGB = null,
     // Text a program copied (OSC 52), until takeClipboard collects it.
     clipboard: std.ArrayList(u8) = .empty,
     clipboard_pending: bool = false,
@@ -233,7 +235,12 @@ pub fn fillSnapshot(session: *Session, buf: []u8) !i32 {
     const held = session.held_since != null;
     if (!held) try state.update(alloc, &session.term);
 
-    const dirty = state.dirty;
+    // New default colors (OSC 10/11, reverse video) mark no row, but every
+    // row was drawn in the old ones: all of them again.
+    const colors = [2]vt.color.RGB{ state.colors.background, state.colors.foreground };
+    const recolored = if (session.shown_colors) |shown| !std.meta.eql(shown, colors) else false;
+    session.shown_colors = colors;
+    const dirty: @TypeOf(state.dirty) = if (recolored) .full else state.dirty;
     const cols: usize = state.cols;
     const cursor = state.cursor;
     const cursor_color: i32 = if (session.term.colors.cursor.get()) |rgb| argb(rgb) else 0;
@@ -422,11 +429,47 @@ fn endsUrl(byte: u8) bool {
 }
 
 
+/// A snapshot buffer for a `cols` × `rows` grid, as the view sizes it.
+fn testBuffer(comptime cols: usize, comptime rows: usize) type {
+    return [header_bytes + rows * (row_header_bytes + cols * cell_record_bytes + cols * max_cell_text_units * 2 + 4)]u8;
+}
+
+/// The header's dirty kind and row record count, after a snapshot.
+fn headerOf(buf: []const u8) struct { dirty: i32, rows: i32, bg: i32, fg: i32 } {
+    const at = struct {
+        fn f(b: []const u8, i: usize) i32 {
+            return std.mem.readInt(i32, b[i * 4 ..][0..4], .little);
+        }
+    }.f;
+    return .{ .dirty = at(buf, 1), .rows = at(buf, 10), .bg = at(buf, 4), .fg = at(buf, 5) };
+}
+
 test "a snapshot of written text" {
     const session = try create(10, 3, 100);
     defer destroy(session);
     session.stream.nextSlice("hi");
-    var buf: [header_bytes + 3 * (16 + 10 * 20 + 10 * 64 + 4)]u8 align(4) = undefined;
-    const rows = try fillSnapshot(session, &buf);
-    try std.testing.expectEqual(3, rows);
+    var buf: testBuffer(10, 3) align(4) = undefined;
+    try std.testing.expectEqual(3, try fillSnapshot(session, &buf));
+    // Nothing new: nothing to draw.
+    try std.testing.expectEqual(0, try fillSnapshot(session, &buf));
+}
+
+test "every row again when the default colors change" {
+    // OSC 11 and reverse video change what every row's blank cells are drawn
+    // in, without marking a row: the view drew them in the old colors.
+    const session = try create(10, 3, 100);
+    defer destroy(session);
+    var buf: testBuffer(10, 3) align(4) = undefined;
+    session.stream.nextSlice("a\r\nb\r\nc");
+    _ = try fillSnapshot(session, &buf);
+
+    session.stream.nextSlice("\x1b]11;#5f0000\x07");
+    try std.testing.expectEqual(3, try fillSnapshot(session, &buf));
+    try std.testing.expectEqual(2, headerOf(&buf).dirty);
+    try std.testing.expectEqual(argb(.{ .r = 0x5f, .g = 0, .b = 0 }), headerOf(&buf).bg);
+    try std.testing.expectEqual(0, try fillSnapshot(session, &buf));
+
+    session.stream.nextSlice("\x1b[?5h");
+    try std.testing.expectEqual(3, try fillSnapshot(session, &buf));
+    try std.testing.expectEqual(argb(.{ .r = 0x5f, .g = 0, .b = 0 }), headerOf(&buf).fg);
 }
