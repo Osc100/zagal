@@ -37,6 +37,7 @@ class TerminalView(context: Context) : LinearLayout {
     fun setLigatures(enabled: Boolean)
     fun setTheme(theme: TerminalTheme?)
     fun setKeyColors(colors: KeyColors?)
+    fun setKeyBar(mode: KeyBarMode)                 // ALWAYS (default), TYPING, OFF
 }
 data class TerminalTheme(background, foreground, cursorColor,
     selectionBackground, selectionForeground, palette: List<String?>?)

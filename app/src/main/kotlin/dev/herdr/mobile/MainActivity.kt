@@ -13,6 +13,9 @@ import androidx.activity.SystemBarStyle
 import androidx.activity.compose.LocalActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.WindowInsets
@@ -111,6 +114,15 @@ class MainActivity : FragmentActivity() {
                     val bars = if (light) SystemBarStyle.light(AndroidColor.TRANSPARENT, AndroidColor.TRANSPARENT)
                     else SystemBarStyle.dark(AndroidColor.TRANSPARENT)
                     enableEdgeToEdge(bars, bars)
+                }
+                LaunchedEffect(prefs.fullscreen) {
+                    val bars = WindowCompat.getInsetsController(window, window.decorView)
+                    if (prefs.fullscreen) {
+                        bars.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+                        bars.hide(WindowInsetsCompat.Type.systemBars())
+                    } else {
+                        bars.show(WindowInsetsCompat.Type.systemBars())
+                    }
                 }
                 Surface(Modifier.fillMaxSize()) { if (loaded) App(main) }
             }

@@ -57,6 +57,12 @@ data class Prefs(
     val terminal: String? = null,
     /** The tablet's sidebar at full width; folded to a rail when false. */
     val sidebar: Boolean = true,
+    /** The app over the status and navigation bars; a swipe from the edge shows them for a moment. */
+    val fullscreen: Boolean = false,
+    /** The terminal's key bar (Esc, Tab, Ctrl, Alt, arrows, paste). */
+    val keyBar: Boolean = true,
+    /** The key bar only while the keyboard is up; otherwise it's always there. */
+    val keyBarTyping: Boolean = false,
 )
 
 data class FontChoice(val family: String?, val label: String, val ligatures: Boolean)
