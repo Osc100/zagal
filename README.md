@@ -44,7 +44,7 @@ to set up.
 
 ## Requirements
 
-- Android 8.0 or newer.
+- Android 10 or newer.
 - On each machine: [herdr-core](https://github.com/herdrdev/herdr-core#install)
   and an SSH server you can reach from the phone, on your local network or
   through a VPN such as Tailscale.
