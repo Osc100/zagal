@@ -117,6 +117,12 @@ internal object GhosttyVt {
    */
   external fun linkAt(handle: Long, col: Int, row: Int): ByteArray?
 
+  /** Text a program copied (OSC 52) since the last call, as UTF-8, or null. */
+  external fun takeClipboard(handle: Long): ByteArray?
+
+  /** Whether programs may copy to the clipboard (default true). */
+  external fun setClipboardWrite(handle: Long, allowed: Boolean)
+
   /** Conservative check: newlines / bracketed-paste escapes are unsafe. */
   external fun isPasteSafe(data: ByteArray): Boolean
 

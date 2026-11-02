@@ -9,20 +9,23 @@
 //! per-cell JNI calls. See GhosttyTerminalView.kt for the reader side.
 //!
 //! Buffer layout:
-//!   header: 13 x i32
-//!     [0] version (2)          [1] dirty kind (0 none / 1 partial / 2 full)
+//!   header: 14 x i32
+//!     [0] version (3)          [1] dirty kind (0 none / 1 partial / 2 full)
 //!     [2] cols                 [3] rows
 //!     [4] default bg (ARGB)    [5] default fg (ARGB)
 //!     [6] cursor x or -1       [7] cursor y or -1
 //!     [8] cursor style         [9] cursor visible (0/1)
 //!     [10] row record count    [11] cursor blinking (0/1)
 //!     [12] cursor color (ARGB) or 0 when unconfigured
+//!     [13] held (0/1): synchronized output; the rows are the frame captured
+//!          when it began, and the caller should look again shortly
 //!   row record:
 //!     i32 rowIndex, i32 selStartX or -1, i32 selEndX or -1, i32 textUnits
-//!     cells[cols] x 16 bytes:
+//!     cells[cols] x 20 bytes:
 //!       i32 fg (ARGB), i32 bg (ARGB),
 //!       u16 textOffset (UTF-16 units into row blob), u16 textLen (units),
-//!       u16 flags, u16 pad
+//!       u16 flags, u16 underline style (0 none, 1 single, 2 double,
+//!       3 curly, 4 dotted, 5 dashed), i32 underline color (ARGB) or 0
 //!     u16 text[textUnits], zero-padded to a 4-byte boundary
 
 const std = @import("std");
@@ -45,9 +48,13 @@ const flag_spacer: u16 = 1 << 8;
 const flag_fg_default: u16 = 1 << 9;
 const flag_bg_none: u16 = 1 << 10;
 
-const header_bytes = 13 * 4;
+const header_bytes = 14 * 4;
 const row_header_bytes = 4 * 4;
-const cell_record_bytes = 16;
+const cell_record_bytes = 20;
+// How long a synchronized-output hold may last before drawing resumes anyway.
+const max_hold_ms = 1000;
+// The most a program may copy to the clipboard at once (OSC 52).
+const max_clipboard_bytes = 1 << 20;
 // Cap per-cell grapheme text; anything longer is truncated (degenerate input).
 const max_cell_text_units = 32;
 
@@ -63,6 +70,12 @@ const Session = struct {
     // Query responses emitted by the terminal while writing; handed back to
     // the caller after each write, for the PTY.
     pty_out: std.ArrayList(u8) = .empty,
+    // When a synchronized-output hold began (monotonic ms), while it lasts.
+    held_since: ?i64 = null,
+    // Text a program copied (OSC 52), until takeClipboard collects it.
+    clipboard: std.ArrayList(u8) = .empty,
+    clipboard_pending: bool = false,
+    clipboard_allowed: bool = true,
 
     fn fromHandler(handler: *vt.TerminalStream.Handler) *Session {
         const stream: *vt.TerminalStream = @fieldParentPtr("handler", handler);
@@ -72,6 +85,35 @@ const Session = struct {
     fn writePty(handler: *vt.TerminalStream.Handler, data: []const u8) void {
         const self = fromHandler(handler);
         self.pty_out.appendSlice(alloc, data) catch {};
+    }
+
+    // Synchronized output (mode 2026): capture the finished frame the program
+    // wants on screen, then draw nothing newer until the hold ends.
+    fn renderHold(handler: *vt.TerminalStream.Handler, held: bool) void {
+        const self = fromHandler(handler);
+        if (held) {
+            self.render.update(alloc, &self.term) catch {};
+            self.held_since = nowMs();
+        } else {
+            self.held_since = null;
+        }
+    }
+
+    // A program copying text (OSC 52, kitty's OSC 5522), kept for
+    // takeClipboard. Android has one clipboard: the standard one.
+    fn clipboardWrite(handler: *vt.TerminalStream.Handler, request: vt.clipboard.Write) void {
+        const self = fromHandler(handler);
+        if (!self.clipboard_allowed) return request.reply(.denied);
+        if (request.location != .standard) return request.reply(.unsupported);
+        for (request.contents) |content| {
+            if (!vt.clipboard.isTextMime(content.mime)) continue;
+            if (content.data.len > max_clipboard_bytes) return request.reply(.invalid_data);
+            self.clipboard.clearRetainingCapacity();
+            self.clipboard.appendSlice(alloc, content.data) catch return request.reply(.io_error);
+            self.clipboard_pending = true;
+            return request.reply(.{ .success = .{} });
+        }
+        request.reply(.unsupported);
     }
 
     // Answered like the C API does: with the default attributes.
@@ -292,6 +334,8 @@ fn newSession(cols: c.jint, rows: c.jint, max_scrollback: c.jlong) !*Session {
     var handler = t.vtHandler();
     handler.effects.write_pty = &Session.writePty;
     handler.effects.device_attributes = &Session.deviceAttributes;
+    handler.effects.render_hold = &Session.renderHold;
+    handler.effects.clipboard_write = &Session.clipboardWrite;
     session.stream = .init(.{ .allocator = alloc, .handler = handler });
 
     t.colors.background.default = .{ .r = 0x00, .g = 0x00, .b = 0x00 };
@@ -309,6 +353,7 @@ fn free(_: Env, _: c.jobject, handle: c.jlong) callconv(.c) void {
     session.stream.deinit();
     session.term.deinit(alloc);
     session.pty_out.deinit(alloc);
+    session.clipboard.deinit(alloc);
     alloc.destroy(session);
 }
 
@@ -441,9 +486,24 @@ fn putU16(buf: []u8, at: usize, v: u16) void {
     std.mem.writeInt(u16, buf[at..][0..2], v, .little);
 }
 
+fn nowMs() i64 {
+    var ts: std.c.timespec = undefined;
+    _ = std.c.clock_gettime(.MONOTONIC, &ts);
+    return @as(i64, ts.sec) * 1000 + @divTrunc(@as(i64, ts.nsec), 1_000_000);
+}
+
 fn fillSnapshot(session: *Session, buf: []u8) !c.jint {
     const state = &session.render;
-    try state.update(alloc, &session.term);
+    // During a hold the render state keeps the frame captured when it began.
+    // A program that never ends its hold doesn't freeze the screen.
+    if (session.held_since) |since| {
+        if (nowMs() - since > max_hold_ms) {
+            session.term.modes.set(.synchronized_output, false);
+            session.held_since = null;
+        }
+    }
+    const held = session.held_since != null;
+    if (!held) try state.update(alloc, &session.term);
 
     const dirty = state.dirty;
     const cols: usize = state.cols;
@@ -457,7 +517,7 @@ fn fillSnapshot(session: *Session, buf: []u8) !c.jint {
     };
 
     const header = [_]i32{
-        2,
+        3,
         @backingInt(dirty),
         @intCast(cols),
         @intCast(state.rows),
@@ -470,6 +530,7 @@ fn fillSnapshot(session: *Session, buf: []u8) !c.jint {
         0, // row record count, set below
         @intFromBool(cursor.blinking),
         cursor_color,
+        @intFromBool(held),
     };
     comptime std.debug.assert(header.len * 4 == header_bytes);
     for (header, 0..) |v, i| putI32(buf, i * 4, v);
@@ -562,7 +623,13 @@ fn fillSnapshot(session: *Session, buf: []u8) !c.jint {
             putU16(buf, record + 8, @intCast(start));
             putU16(buf, record + 10, @intCast(units));
             putU16(buf, record + 12, flags);
-            putU16(buf, record + 14, 0);
+            putU16(buf, record + 14, @intFromEnum(style.flags.underline));
+            const underline_color: ?vt.color.RGB = switch (style.underline_color) {
+                .none => null,
+                .palette => |idx| palette[idx],
+                .rgb => |rgb| rgb,
+            };
+            putI32(buf, record + 16, if (underline_color) |rgb| argb(rgb) else 0);
         }
         // Zero-fill any remaining cell records (defensive; cols should match).
         while (col < cols) : (col += 1) {
@@ -715,6 +782,21 @@ fn endsUrl(byte: u8) bool {
     return byte <= ' ' or byte >= 0x7F or std.mem.indexOfScalar(u8, "<>\"'`", byte) != null;
 }
 
+/// Text a program copied (OSC 52) since the last call, or null.
+fn takeClipboard(env: Env, _: c.jobject, handle: c.jlong) callconv(.c) c.jbyteArray {
+    const session = fromHandle(handle) orelse return null;
+    if (!session.clipboard_pending) return null;
+    session.clipboard_pending = false;
+    return newBytes(env, session.clipboard.items);
+}
+
+/// Whether programs may copy to the clipboard; refused writes are answered
+/// as denied.
+fn setClipboardWrite(_: Env, _: c.jobject, handle: c.jlong, allowed: c.jboolean) callconv(.c) void {
+    const session = fromHandle(handle) orelse return;
+    session.clipboard_allowed = allowed != c.JNI_FALSE;
+}
+
 fn isPasteSafe(env: Env, _: c.jobject, data: c.jbyteArray) callconv(.c) c.jboolean {
     const bytes = bytesOf(env, data) orelse return c.JNI_TRUE;
     defer alloc.free(bytes);
@@ -846,6 +928,8 @@ const methods = [_]c.JNINativeMethod{
     method("clearSelection", "(J)V", &clearSelection),
     method("selectionText", "(J)[B", &selectionText),
     method("linkAt", "(JII)[B", &linkAt),
+    method("takeClipboard", "(J)[B", &takeClipboard),
+    method("setClipboardWrite", "(JZ)V", &setClipboardWrite),
     method("isPasteSafe", "([B)Z", &isPasteSafe),
     method("encodePaste", "(J[B)[B", &encodePaste),
 };
