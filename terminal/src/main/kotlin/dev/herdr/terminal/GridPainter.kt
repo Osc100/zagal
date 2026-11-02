@@ -83,6 +83,7 @@ internal class GridPainter(private val context: Context) {
   var selectionFg: Int? = null
 
   init {
+    applyFeatures()
     measureCell()
   }
 
@@ -155,17 +156,21 @@ internal class GridPainter(private val context: Context) {
   }
 
   /**
-   * Programming ligatures (`->`, `!=`, `===`): runs of plain ASCII cells in one
-   * style are drawn as one string so the font can join them; monospace
-   * advances keep every glyph on its own cell. Off disables liga/calt. False
-   * when it didn't change.
+   * Programming ligatures (`->`, `!=`, `===`): runs of cells are drawn as one
+   * string either way, and with these on the font joins their ASCII. Off
+   * disables liga/calt. False when it didn't change.
    */
   fun setLigatures(enabled: Boolean): Boolean {
     if (enabled == ligatures) return false
     ligatures = enabled
-    val features = if (enabled) "'liga' 1, 'calt' 1" else "'liga' 0, 'calt' 0"
-    for (paint in stylePaints) paint.fontFeatureSettings = features
+    applyFeatures()
     return true
+  }
+
+  private fun applyFeatures() {
+    // No kerning either way: a run's characters stay on their cells.
+    val features = if (ligatures) "'liga' 1, 'calt' 1, 'kern' 0" else "'liga' 0, 'calt' 0, 'kern' 0"
+    for (paint in stylePaints) paint.fontFeatureSettings = features
   }
 
   /** Room for a grid of [cols] × [rows]: the per-cell arrays and row selections. */
@@ -200,13 +205,23 @@ internal class GridPainter(private val context: Context) {
     rowSelEndWide[to] = keptSelEndWide[from]
   }
 
-  private fun joinable(col: Int): Boolean {
+  /**
+   * Whether a cell's character can be in a run: one the terminal font draws
+   * a cell wide (printable ASCII; Latin-1 and Latin Extended-A too without
+   * ligatures, which only join ASCII).
+   */
+  private fun runs(col: Int): Boolean {
     val flags = cellFlags[col]
-    if (cellTextLen[col] != 1 || flags and (FLAG_SPACER or FLAG_INVISIBLE or FLAG_WIDE) != 0) {
-      return false
-    }
+    if (cellTextLen[col] != 1 || flags and (FLAG_SPACER or FLAG_INVISIBLE or FLAG_WIDE) != 0) return false
     val c = rowChars[cellTextOff[col]].code
-    return c in 0x21..0x7E
+    return c in 0x21..0x7E || !ligatures && c in 0xA1..0x17F && canDraw(c)
+  }
+
+  /** A cell with nothing to draw but its background: a run goes on over it. */
+  private fun blank(col: Int): Boolean {
+    if (cellFlags[col] and (FLAG_SPACER or FLAG_WIDE) != 0) return false
+    val len = cellTextLen[col]
+    return len == 0 || len == 1 && rowChars[cellTextOff[col]] == ' '
   }
 
   /**
@@ -280,15 +295,22 @@ internal class GridPainter(private val context: Context) {
     val top = (rowIndex * cellHeight).toFloat()
     val bottom = top + cellHeight
 
-    // Background pass: row clear, then per-cell backgrounds.
+    // Background pass: row clear, then backgrounds, a rect per run of one color.
     fillPaint.color = defaultBg
     canvas.drawRect(0f, top, canvas.width.toFloat(), bottom, fillPaint)
-    for (col in 0 until colCount) {
-      val bg = cellBg[col]
-      if (bg == defaultBg) continue
-      val x = col * cellWidth
-      fillPaint.color = bg
-      canvas.drawRect(x, top, x + cellSpan(cellFlags[col]), bottom, fillPaint)
+    // (A wide character's right half is in the character's.)
+    fun bgAt(col: Int) =
+      if (col > 0 && cellFlags[col] and FLAG_SPACER != 0 && cellFlags[col - 1] and FLAG_WIDE != 0) cellBg[col - 1] else cellBg[col]
+    var from = 0
+    while (from < colCount) {
+      val bg = bgAt(from)
+      var to = from + 1
+      while (to < colCount && bgAt(to) == bg) to++
+      if (bg != defaultBg) {
+        fillPaint.color = bg
+        canvas.drawRect(from * cellWidth, top, to * cellWidth, bottom, fillPaint)
+      }
+      from = to
     }
 
     // Text pass.
@@ -296,21 +318,27 @@ internal class GridPainter(private val context: Context) {
     while (col < colCount) {
       val flags = cellFlags[col]
       val len = cellTextLen[col]
-      if (len == 0 || flags and FLAG_SPACER != 0 || flags and FLAG_INVISIBLE != 0) {
+      // Nothing to draw (but a space's underline or strikethrough).
+      if (len == 0 || flags and FLAG_SPACER != 0 || flags and FLAG_INVISIBLE != 0 ||
+        blank(col) && flags and DECORATIONS == 0
+      ) {
         col++
         continue
       }
       val codepoint = Character.codePointAt(rowChars, cellTextOff[col])
       val paint = paintFor(codepoint, flags)
-      // Ligatures: extend over following ASCII cells with the same look.
+      // A run: the cells after it that look the same (blanks among them),
+      // drawn as one string, as herdr-app shapes them; monospace advances
+      // keep each character on its cell. Not over a change of background (a
+      // selection's edge) or the cursor, which draws its own cell's character.
       var end = col + 1
-      // Not over a change of background (a selection's edge) or the cursor,
-      // which draws its own cell's character, as herdr-app's runs.
-      if (ligatures && joinable(col)) {
+      if (runs(col)) {
         val cursor = if (rowIndex == cursorY) cursorX else -1
-        while (end < colCount && joinable(end) && cellFg[end] == cellFg[col] && cellBg[end] == cellBg[col] &&
-          cellFlags[end] and STYLE_FLAGS == flags and STYLE_FLAGS && end != cursor && col != cursor
+        while (end < colCount && (runs(end) || blank(end)) && cellFg[end] == cellFg[col] &&
+          cellBg[end] == cellBg[col] && cellFlags[end] and STYLE_FLAGS == flags and STYLE_FLAGS &&
+          end != cursor && col != cursor
         ) end++
+        while (end > col + 1 && blank(end - 1)) end--
       }
       paint.color = cellFg[col]
       if (flags and FLAG_FAINT != 0) paint.alpha = 160
@@ -321,7 +349,7 @@ internal class GridPainter(private val context: Context) {
         }
       } else {
         runText.setLength(0)
-        for (c in col until end) runText.append(rowChars[cellTextOff[c]])
+        for (c in col until end) runText.append(if (cellTextLen[c] == 0) ' ' else rowChars[cellTextOff[c]])
         canvas.drawText(runText, 0, runText.length, x, top + baseline, paint)
       }
       for (c in col until end) {
@@ -587,5 +615,6 @@ internal class GridPainter(private val context: Context) {
     const val FLAG_BG_NONE = 1 shl 10
     const val FLAG_OVERLINE = 1 shl 11
     const val STYLE_FLAGS = FLAG_BOLD or FLAG_ITALIC or FLAG_FAINT
+    private const val DECORATIONS = FLAG_UNDERLINE or FLAG_STRIKETHROUGH or FLAG_OVERLINE
   }
 }
