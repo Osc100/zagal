@@ -289,10 +289,26 @@ private suspend fun installed(client: Client, machine: String?, commands: List<S
 }
 
 /**
+ * Where a new tab in `space` starts (window.rs `folder_for`): the shown
+ * terminal's folder (Herdr's "follow") when it's in that space, else null:
+ * the space's own.
+ */
+fun tabFolder(shown: Terminal?, space: String): String? =
+    shown?.takeIf { it.space == space }?.cwd?.ifEmpty { null }
+
+/**
+ * Where a new space on `machine` starts (window.rs `new_space`): the shown
+ * terminal's folder, which only means something on its own machine; else
+ * null, its home.
+ */
+fun spaceFolder(shown: Terminal?, machine: String?): String? =
+    shown?.takeIf { it.machine == machine }?.cwd?.ifEmpty { null }
+
+/**
  * A tab with a new terminal in a space (window.rs `new_tab`), after `after`
  * (the tab the phone shows; the desktop puts it after its selected one),
  * else last. `folder`: default the space's; the desktop uses the shown
- * terminal's cwd, so pass that when there is one. `name`: "" shows its position.
+ * terminal's ([tabFolder]). `name`: "" shows its position.
  */
 suspend fun newTab(
     client: Client,
@@ -328,8 +344,9 @@ suspend fun newTab(
 /**
  * A space with one tab and its terminal, last among the machine's spaces
  * (window.rs `new_space`, model.rs `add_space`). `name`: "" is named after
- * its folder by every screen. `folder`: default this core's home (where its
- * terminal starts) or, on another machine, "" (its home, as the desktop).
+ * its folder by every screen. `folder`: the desktop's is the shown terminal's
+ * ([spaceFolder]); default this core's home (where its terminal starts) or,
+ * on another machine, "" (its home, as the desktop).
  */
 suspend fun newSpace(
     client: Client,

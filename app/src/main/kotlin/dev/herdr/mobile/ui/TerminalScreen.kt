@@ -266,7 +266,7 @@ private fun TabStrip(space: Space, session: Session, address: String, vm: Termin
     if (menu) {
         val after = space.tabs.getOrNull(shown)?.id
         NewMenu("New tab in ${space.name}", space.host, space.machine, vm, onClose = { menu = false }) {
-            vm.newTab(space.machine, space.id, after, it)
+            vm.newTab(space.machine, space.id, after, address, it)
         }
     }
 }

@@ -14,6 +14,8 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import dev.herdr.mobile.notify.Notifier
+import dev.herdr.mobile.session.hostOf
+import dev.herdr.mobile.session.localOf
 import dev.herdr.mobile.session.Actions
 import dev.herdr.mobile.session.Host
 import dev.herdr.mobile.session.HostState
@@ -108,12 +110,14 @@ abstract class LayoutViewModel(
         }
     }
 
-    fun newTab(machine: String?, space: String, after: String?, c: Choice) = attempt("Could not open a tab") {
-        _opened.send(actions.newTab(machine, space, after, c).address)
+    /** `shown`: the terminal on screen, whose folder the tab starts in. */
+    fun newTab(machine: String?, space: String, after: String?, shown: String?, c: Choice) = attempt("Could not open a tab") {
+        _opened.send(actions.newTab(machine, space, after, shown, c).address)
     }
 
+    /** Starts in the current terminal's folder, if it's on that machine. */
     fun newSpace(host: String, machine: String?, c: Choice) = attempt("Could not make a space") {
-        _opened.send(actions.newSpace(host, machine, c).address)
+        _opened.send(actions.newSpace(host, machine, current.value, c).address)
     }
 
     fun closeTab(machine: String?, space: String, tab: String) = confirm(space, tab) {
@@ -225,6 +229,11 @@ class MainViewModel(
 
     /** A host's client while it's connected, for the live terminal. */
     fun client(host: String): Flow<Client?> = live.client(host)
+
+    /** A terminal's size (cols, rows) as its core last reported it, if it has. */
+    fun sizeOf(address: String): Pair<Int, Int>? =
+        live.core(hostOf(address))?.snapshot?.value?.terminals?.find { it.address == localOf(address) }?.record
+            ?.takeIf { it.cols > 0 && it.rows > 0 }?.let { it.cols to it.rows }
 
     fun reconnect(id: String) = live.reconnect(id)
 

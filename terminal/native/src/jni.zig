@@ -76,6 +76,8 @@ const Session = struct {
     clipboard: std.ArrayList(u8) = .empty,
     clipboard_pending: bool = false,
     clipboard_allowed: bool = true,
+    // The cell last reported for motion, so a pointer moving within a cell sends nothing.
+    mouse_cell: ?vt.Coordinate = null,
 
     fn fromHandler(handler: *vt.TerminalStream.Handler) *Session {
         const stream: *vt.TerminalStream = @fieldParentPtr("handler", handler);
@@ -827,6 +829,7 @@ fn encodeKey(
     key_code: c.jint,
     action: c.jint,
     meta_state: c.jint,
+    consumed_meta_state: c.jint,
     unshifted_codepoint: c.jint,
     utf8: c.jbyteArray,
 ) callconv(.c) c.jbyteArray {
@@ -845,6 +848,8 @@ fn encodeKey(
         },
         .key = mapKey(key_code),
         .mods = mapMods(meta_state),
+        // What the text used up: with kitty flags on, Shift+; is ':', not a shifted ';'.
+        .consumed_mods = mapMods(consumed_meta_state),
         .utf8 = text orelse "",
         .unshifted_codepoint = std.math.cast(u21, unshifted_codepoint) orelse 0,
     };
@@ -905,6 +910,66 @@ fn encodeWheel(
     return newBytesOrNull(env, out.written());
 }
 
+// Every row again in the next snapshot: a view shown again has lost its drawn rows.
+fn redraw(_: Env, _: c.jobject, handle: c.jlong) callconv(.c) void {
+    const session = fromHandle(handle) orelse return;
+    session.dirtyAll();
+}
+
+// A pointer's press (0), release (1) or motion (2) of `button` (0 none,
+// 1 left, 2 right, 3 middle) at a pixel position, encoded for the program's
+// mouse mode and format; null when it encodes to nothing (it doesn't track
+// the mouse, or motion within the same cell).
+fn encodeMouse(
+    env: Env,
+    _: c.jobject,
+    handle: c.jlong,
+    action: c.jint,
+    button: c.jint,
+    meta_state: c.jint,
+    x: c.jfloat,
+    y: c.jfloat,
+    screen_width: c.jint,
+    screen_height: c.jint,
+    cell_width: c.jint,
+    cell_height: c.jint,
+    any_pressed: c.jboolean,
+) callconv(.c) c.jbyteArray {
+    const session = fromHandle(handle) orelse return null;
+    if (cell_width <= 0 or cell_height <= 0) return null;
+    const t = &session.term;
+    const opts: vt.input.MouseEncodeOptions = .{
+        .event = t.flags.mouse_event,
+        .format = t.flags.mouse_format,
+        .size = .{
+            .screen = .{ .width = @intCast(@max(screen_width, 0)), .height = @intCast(@max(screen_height, 0)) },
+            .cell = .{ .width = @intCast(cell_width), .height = @intCast(cell_height) },
+            .padding = .{},
+        },
+        .any_button_pressed = any_pressed != 0,
+        .last_cell = &session.mouse_cell,
+    };
+    const event: vt.input.MouseEncodeEvent = .{
+        .action = switch (action) {
+            0 => .press,
+            1 => .release,
+            else => .motion,
+        },
+        .button = switch (button) {
+            1 => .left,
+            2 => .right,
+            3 => .middle,
+            else => null,
+        },
+        .mods = mapMods(meta_state),
+        .pos = .{ .x = x, .y = y },
+    };
+    var out: std.Io.Writer.Allocating = .init(alloc);
+    defer out.deinit();
+    vt.input.encodeMouse(&out.writer, event, opts) catch return null;
+    return newBytesOrNull(env, out.written());
+}
+
 // ---- Registration ------------------------------------------------------------
 
 /// GhosttyVt's external funs, by name and JNI signature.
@@ -919,9 +984,11 @@ const methods = [_]c.JNINativeMethod{
     method("scrollToBottom", "(J)V", &scrollToBottom),
     method("scrollTarget", "(J)I", &scrollTarget),
     method("encodeWheel", "(JZIFFIIII)[B", &encodeWheel),
+    method("encodeMouse", "(JIIIFFIIIIZ)[B", &encodeMouse),
+    method("redraw", "(J)V", &redraw),
     method("scrollbar", "(J)[J", &scrollbar),
     method("snapshot", "(JLjava/nio/ByteBuffer;)I", &snapshot),
-    method("encodeKey", "(JIIII[B)[B", &encodeKey),
+    method("encodeKey", "(JIIIII[B)[B", &encodeKey),
     method("selectWord", "(JII)Z", &selectWord),
     method("selectAll", "(J)Z", &selectAll),
     method("setSelection", "(JIIII)Z", &setSelection),

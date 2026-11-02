@@ -28,10 +28,15 @@ jobs:
       - run: mise run release
         env:
           ZAGAL_PASSWORD: ${{ secrets.ZAGAL_PASSWORD }}
+      # The notes are the version's changelog, as the app stores show it (a
+      # missing one fails the release), above GitHub's list of merged PRs.
       - name: Publish
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           apk="zagal-${GITHUB_REF_NAME}.apk"
           cp app/build/outputs/apk/release/app-release.apk "$apk"
-          gh release create "$GITHUB_REF_NAME" "$apk" --generate-notes
+          code=$(sed -n 's/.*versionCode = \([0-9]*\).*/\1/p' app/build.gradle.kts)
+          gh release create "$GITHUB_REF_NAME" "$apk" \
+            --notes-file "fastlane/metadata/android/en-US/changelogs/$code.txt" \
+            --generate-notes

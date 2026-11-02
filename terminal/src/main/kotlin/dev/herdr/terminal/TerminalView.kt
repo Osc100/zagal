@@ -184,6 +184,16 @@ class TerminalView(context: Context) : LinearLayout(context) {
      */
     fun write(data: ByteArray) = terminal.write(data)
 
+    /**
+     * While true the grid shows only its background: what's written is parsed
+     * and kept, and shows once it's let go (a frame the program is about to replace).
+     */
+    var held: Boolean
+        get() = terminal.held
+        set(value) {
+            terminal.held = value
+        }
+
     /** The program exited: stop forwarding input. */
     fun finish() = terminal.finish()
 

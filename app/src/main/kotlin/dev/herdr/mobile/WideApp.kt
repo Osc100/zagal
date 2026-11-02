@@ -138,7 +138,9 @@ fun WideApp(main: MainViewModel, host: TerminalHost, prefs: Prefs) {
             }
         }
         VerticalDivider()
-        Surface(Modifier.weight(1f).fillMaxHeight(), color = MaterialTheme.colorScheme.surfaceDim) {
+        // Settings sits on the surface its rows and fields are drawn on, as on the phone.
+        val pane = if (settings) MaterialTheme.colorScheme.surface else MaterialTheme.colorScheme.surfaceDim
+        Surface(Modifier.weight(1f).fillMaxHeight(), color = pane) {
             if (settings) {
                 SettingsScreen(appViewModel())
             } else {

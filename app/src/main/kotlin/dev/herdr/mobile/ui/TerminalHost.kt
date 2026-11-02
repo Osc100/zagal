@@ -1,9 +1,10 @@
-// The one live terminal, kept for as long as the activity: its ghostty view
-// and its attach stream outlive the Terminal screen, so switching tabs and
-// back shows the same grid with nothing to replay. The core's attach stream
-// feeds it; bytes are credited back only once drawn, so a flood can't swamp
-// the phone; a dropped connection reattaches (`resumed`) as soon as the
-// client is back.
+// The live terminals, kept for as long as the activity: the one on screen and
+// the last few shown, each a ghostty view with its attach stream, as herdr-app
+// keeps its tabs. Switching back to one shows the same grid with nothing to
+// replay, so it never flashes the screen at the size the program had before.
+// The core's attach stream feeds each; bytes are credited back only once
+// drawn, so a flood can't swamp the phone; a dropped connection reattaches
+// (`resumed`) as soon as the client is back.
 
 package dev.herdr.mobile.ui
 
@@ -12,6 +13,8 @@ import android.content.Context
 import android.content.Intent
 import android.graphics.Typeface
 import android.net.Uri
+import android.os.Handler
+import android.os.Looper
 import android.view.KeyEvent
 import android.view.ViewGroup
 import androidx.core.content.res.ResourcesCompat
@@ -36,10 +39,14 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
 sealed interface PaneState {
@@ -54,112 +61,176 @@ private fun TerminalView.detach() {
     (parent as? ViewGroup)?.removeView(this)
 }
 
+/** How many terminals stay attached: the one on screen and the last ones shown. */
+private const val KEPT = 4
+
+/** A resized program's redraw is in once its output pauses this long (ms)... */
+private const val SETTLED_MS = 32L
+
+/** ...or after this long, if it doesn't redraw at all (ms). */
+private const val SETTLE_MAX_MS = 100L
+
+/** One attached terminal: its view, its stream and how the attach is going. */
+private class Live(val view: TerminalView, val state: MutableStateFlow<PaneState>) {
+    var job: Job? = null
+    var stream: Attached? = null
+}
+
 /** Everything here runs on the main thread (the scope is the activity's composition). */
+@OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
 class TerminalHost(
     private val context: Context,
     private val scope: CoroutineScope,
     /** A host's client while it's connected. */
     private val client: (host: String) -> Flow<Client?>,
+    /** A terminal's size as its core has it, before this viewer sizes it. */
+    private val sizeOf: (address: String) -> Pair<Int, Int>?,
 ) {
-    private val _state = MutableStateFlow<PaneState>(PaneState.Waiting)
-    val state: StateFlow<PaneState> = _state
+    // Most recently shown last; the last one is on screen.
+    private val kept = LinkedHashMap<String, Live>()
+    private val shown = MutableStateFlow<Live?>(null)
+    private val main = Handler(Looper.getMainLooper())
 
-    private var address: String? = null
-    private var view: TerminalView? = null
-    private var job: Job? = null
-    private var stream: Attached? = null
+    /** How the terminal on screen is attaching. */
+    val state: StateFlow<PaneState> = shown
+        .flatMapLatest { it?.state ?: flowOf(PaneState.Waiting) }
+        .stateIn(scope, SharingStarted.Eagerly, PaneState.Waiting)
+
+    private val view: TerminalView? get() = shown.value?.view
 
     // This viewer's colors and cell size, for the core: it answers programs that
     // ask whether the terminal is dark or light (CSI ? 996 n) from them.
     private var display: Display? = null
 
     /**
-     * The view for `address` (host-qualified): the one already showing it, or
-     * a fresh one (ghostty's grid belongs to one stream).
+     * The view for `address` (host-qualified): one kept from before, as it was
+     * left, or a fresh one (ghostty's grid belongs to one stream).
      */
     fun show(address: String): TerminalView {
-        view?.takeIf { this.address == address }?.let {
-            it.detach()
-            return it
+        shown.value?.let { if (it !== kept[address]) it.stream?.focus(false) }
+        val live = kept.remove(address) ?: attach(address)
+        kept[address] = live
+        // The oldest beyond what's kept let go of their streams.
+        while (kept.size > KEPT) {
+            val oldest = kept.keys.first()
+            kept.remove(oldest)?.let(::free)
         }
-        release()
-        this.address = address
+        shown.value = live
+        live.stream?.focus(true)
+        live.view.detach()
+        return live.view
+    }
+
+    private fun attach(address: String): Live {
         val size = MutableStateFlow<Pair<Int, Int>?>(null)
-        val made = TerminalView(context).apply {
-            onInput = { bytes -> stream?.write(bytes) }
-            onResize = { cols, rows ->
-                size.value = cols to rows
-                stream?.resize(cols, rows)
-            }
-            onLink = ::openLink
+        val made = TerminalView(context)
+        val live = Live(made, MutableStateFlow(PaneState.Waiting))
+        made.onInput = { bytes -> live.stream?.write(bytes) }
+        made.onResize = { cols, rows ->
+            size.value = cols to rows
+            live.stream?.resize(cols, rows)
         }
-        view = made
-        job = scope.launch {
+        made.onLink = ::openLink
+        live.job = scope.launch {
             var seen = false
             // Attach once there's a client and a size; a later resize (the keyboard,
             // rotation) goes to the live stream, never a fresh attach.
             combine(client(hostOf(address)), size) { c, s -> c to (s != null) }.distinctUntilChanged().collectLatest { (c, sized) ->
                 val s = size.value
                 if (c == null || !sized || s == null) {
-                    _state.value = PaneState.Waiting
+                    live.state.value = PaneState.Waiting
                     return@collectLatest
                 }
-                _state.value = PaneState.Attaching
+                live.state.value = PaneState.Attaching
+                // Attaching at another size resizes the program: the core's first paint
+                // is its old frame cut to the new size, and the program redraws right
+                // after. Show neither the old frame nor the jump: hold the grid until
+                // its output pauses.
+                val settling = sizeOf(address)?.let { it != s } ?: false
+                val settled = Runnable {
+                    made.held = false
+                    if (live.stream != null) live.state.value = PaneState.Live
+                }
+                // Apart from the pause timer, which output keeps pushing back: a program
+                // that never stops printing shows too.
+                val cap = Runnable { settled.run() }
                 val a = try {
                     c.attach(localOf(address), AttachOptions(s.first, s.second, history = 2000, resumed = seen, display = display))
                 } catch (e: CancellationException) {
                     throw e
                 } catch (e: Exception) {
-                    _state.value = PaneState.Failed(e.reason)
+                    live.state.value = PaneState.Failed(e.reason)
                     return@collectLatest
                 }
                 seen = true
-                stream = a
+                live.stream = a
+                if (settling) {
+                    made.held = true
+                    main.postDelayed(cap, SETTLE_MAX_MS)
+                }
                 // Stream listeners run on the client's thread; the view is the main thread's.
                 // What arrives while the main thread is busy is written in one go (as
                 // herdr-app does), so a backlog is parsed before the next frame rather
-                // than one chunk per frame. Only the chunk that finds the queue empty posts.
+                // than one chunk per frame. Only the chunk that finds the queue empty posts,
+                // to the main thread rather than the view: one off screen is detached, and
+                // its output must still be parsed and credited.
                 val pending = ArrayDeque<ByteArray>()
                 a.onData { bytes ->
                     val first = synchronized(pending) {
                         pending.addLast(bytes)
                         pending.size == 1
                     }
-                    if (first) made.post {
+                    if (first) main.post {
                         val batch = synchronized(pending) { pending.toList().also { pending.clear() } }
+                        if (live.stream !== a) return@post
                         for (chunk in batch) {
                             made.write(chunk)
                             // Parsed: credit the stream for them.
                             a.consumed(chunk.size)
                         }
+                        if (made.held) {
+                            main.removeCallbacks(settled)
+                            main.postDelayed(settled, SETTLED_MS)
+                        }
                     }
                 }
                 a.onEnd { end ->
-                    made.post {
-                        if (stream === a) stream = null
+                    main.post {
+                        if (live.stream === a) live.stream = null
                         when (end) {
-                            is End.Lost -> _state.value = PaneState.Waiting
+                            is End.Lost -> live.state.value = PaneState.Waiting
                             is End.Closed -> {
                                 made.finish()
-                                _state.value = PaneState.Ended(end.summary)
+                                live.state.value = PaneState.Ended(end.summary)
                             }
                         }
                     }
                 }
-                a.focus(true)
-                _state.value = PaneState.Live
+                a.focus(shown.value === live)
+                if (!settling) live.state.value = PaneState.Live
                 try {
                     awaitCancellation()
                 } finally {
+                    main.removeCallbacks(settled)
+                    main.removeCallbacks(cap)
+                    made.held = false
                     a.close()
-                    if (stream === a) stream = null
+                    if (live.stream === a) live.stream = null
                 }
             }
         }
-        return made
+        return live
     }
 
-    /** Draws with the user's font and the Herdr palette in use. */
+    private fun free(live: Live) {
+        live.job?.cancel()
+        live.stream = null
+        live.view.detach()
+        live.view.destroy()
+        if (shown.value === live) shown.value = null
+    }
+
+    /** Draws with the user's font and the Herdr palette in use (the terminal on screen's). */
     fun style(prefs: Prefs, colors: HerdrColors) {
         val v = view ?: return
         v.setTypeface(typeface(prefs.font))
@@ -191,7 +262,7 @@ class TerminalHost(
         )
         if (next != display) {
             display = next
-            stream?.facts(next)
+            for (live in kept.values) live.stream?.facts(next)
         }
         v.setKeyColors(
             KeyColors(
@@ -231,17 +302,10 @@ class TerminalHost(
     /** A hardware keyboard's key for the terminal on screen, if one is; false if it isn't taken. */
     fun takeHardwareKey(event: KeyEvent): Boolean = view?.takeIf { it.isShown }?.takeHardwareKey(event) ?: false
 
-    /** Detaches and frees the terminal (none to show, or the activity is gone). */
+    /** Detaches and frees every terminal (none to show, or the activity is gone). */
     fun release() {
-        job?.cancel()
-        job = null
-        stream = null
-        view?.let {
-            it.detach()
-            it.destroy()
-        }
-        view = null
-        address = null
-        _state.value = PaneState.Waiting
+        for (live in kept.values) free(live)
+        kept.clear()
+        shown.value = null
     }
 }

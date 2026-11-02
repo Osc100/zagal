@@ -8,6 +8,8 @@ import herdr.core.Choice
 import herdr.core.Client
 import herdr.core.Created
 import herdr.core.confirmClose
+import herdr.core.spaceFolder
+import herdr.core.tabFolder
 
 /** What closing asks before it happens. */
 data class Prompt(val title: String, val detail: String, val confirm: String)
@@ -40,15 +42,22 @@ class Actions(private val live: Live) {
         return Prompt("Close tab?", "$name in ${model.name}$ends", "Close tab")
     }
 
+    // The terminal shown (an app-wide address), as its host's core has it.
+    private fun shownOn(host: String, shown: String?) =
+        shown?.takeIf { hostOf(it) == host }?.let { s -> live.core(host)?.snapshot?.value?.terminals?.find { it.address == localOf(s) } }
+
     suspend fun choices(host: String, machine: String?): List<Choice> = herdr.core.templates(client(host), machine)
 
-    suspend fun newTab(machine: String?, space: String, after: String?, c: Choice): Created {
+    /** Starts where `shown` is, if it's in this space (the desktop's "follow"). */
+    suspend fun newTab(machine: String?, space: String, after: String?, shown: String?, c: Choice): Created {
         val host = hostOf(space)
-        return herdr.core.newTab(client(host), machine, localOf(space), name = c.tab, after = after?.let(::localOf), run = c.run).on(host)
+        val folder = tabFolder(shownOn(host, shown), localOf(space))
+        return herdr.core.newTab(client(host), machine, localOf(space), name = c.tab, folder = folder, after = after?.let(::localOf), run = c.run).on(host)
     }
 
-    suspend fun newSpace(host: String, machine: String?, c: Choice): Created =
-        herdr.core.newSpace(client(host), machine, tab = c.tab, run = c.run).on(host)
+    /** Starts where `shown` is, if it's on this machine. */
+    suspend fun newSpace(host: String, machine: String?, shown: String?, c: Choice): Created =
+        herdr.core.newSpace(client(host), machine, folder = spaceFolder(shownOn(host, shown), machine), tab = c.tab, run = c.run).on(host)
 
     suspend fun closeTab(machine: String?, tab: String) {
         val host = hostOf(tab)

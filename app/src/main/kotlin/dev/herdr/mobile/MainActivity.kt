@@ -210,7 +210,7 @@ private fun App(main: MainViewModel) {
     // The live terminal belongs to the activity, not the screen: leaving the
     // Terminal tab keeps its grid and its stream.
     val scope = rememberCoroutineScope()
-    val host = remember { TerminalHost(context, scope, main::client) }
+    val host = remember { TerminalHost(context, scope, main::client, main::sizeOf) }
     DisposableEffect(host) {
         val activity = context as? MainActivity
         activity?.terminals = host

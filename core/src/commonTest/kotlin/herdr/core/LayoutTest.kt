@@ -205,6 +205,33 @@ class LayoutTest {
         assertEquals("t101", (added2.tabs()[0].pane()["content"] as JsonObject).string("terminal"))
     }
 
+    private fun shown(address: String, cwd: String, space: String?) = Terminal(
+        address = address, machine = machineOf(address), name = null, agent = null, program = "fish",
+        shown = programOf(null, listOf("fish")), title = "", detail = null, cwd = cwd, status = null,
+        attention = null, statusMs = null, space = space, tab = null, where = null, parent = null,
+        record = TerminalRecord(JsonObject(emptyMap())),
+    )
+
+    @Test
+    fun newTerminalsStartWhereTheShownOneIsOnItsOwnSpaceOrMachine() = runTest {
+        val beta = "beta/spcae1915e68e0da788a1f79297633b3c1"
+        val here = shown("t1", "/src/app", expo)
+        assertEquals("/src/app", tabFolder(here, expo))
+        assertNull(tabFolder(here, beta), "another space: its own folder")
+        assertNull(tabFolder(shown("t1", "", expo), expo), "not read yet: the space's")
+        assertNull(tabFolder(null, expo))
+        assertEquals("/src/app", spaceFolder(here, null))
+        assertNull(spaceFolder(here, "beta"), "a folder here means nothing there")
+        assertEquals("/srv", spaceFolder(shown("beta/t2", "/srv", beta), "beta"))
+
+        val (herdr, client) = setup()
+        newTab(client, null, expo, folder = tabFolder(here, expo))
+        assertEquals(JsonPrimitive("/src/app"), herdr.runs[0]["cwd"])
+        newSpace(client, null, folder = spaceFolder(here, null))
+        assertEquals(JsonPrimitive("/src/app"), herdr.runs[1]["cwd"])
+        assertEquals("/src/app", doc(herdr).spaces().last().string("folder"), "made in it")
+    }
+
     @Test
     fun anotherScreenWritesFirstReadAgainAndRedoTheStepOnItsDocument() = runTest {
         val (herdr, client) = setup()

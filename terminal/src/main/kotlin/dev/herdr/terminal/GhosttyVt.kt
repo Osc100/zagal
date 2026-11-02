@@ -55,6 +55,9 @@ internal object GhosttyVt {
   /** Where a vertical swipe goes: 0 scrollback, 1 mouse wheel, 2 arrow keys. */
   external fun scrollTarget(handle: Long): Int
 
+  /** Marks every row for the next [snapshot]. */
+  external fun redraw(handle: Long)
+
   /** [count] wheel notches at a pixel position, for the active mouse mode. */
   external fun encodeWheel(
     handle: Long,
@@ -66,6 +69,25 @@ internal object GhosttyVt {
     screenHeight: Int,
     cellWidth: Int,
     cellHeight: Int
+  ): ByteArray?
+
+  /**
+   * A pointer's press (0), release (1) or motion (2) of [button] (0 none,
+   * 1 left, 2 right, 3 middle) at a pixel position, for a program that tracks
+   * the mouse; null when it encodes to nothing (motion within a cell).
+   */
+  external fun encodeMouse(
+    handle: Long,
+    action: Int,
+    button: Int,
+    metaState: Int,
+    x: Float,
+    y: Float,
+    screenWidth: Int,
+    screenHeight: Int,
+    cellWidth: Int,
+    cellHeight: Int,
+    anyPressed: Boolean
   ): ByteArray?
 
   /** Viewport scrollbar as [total, offset, len] rows, or null. */
@@ -81,13 +103,15 @@ internal object GhosttyVt {
   /**
    * Encode a key event ([action]: 0 release / 1 press / 2 repeat) into the
    * escape-sequence bytes to send to the PTY, or null when the key encodes
-   * to nothing under the terminal's active modes.
+   * to nothing under the terminal's active modes. [consumedMetaState] is the
+   * part of [metaState] that went into [utf8] (Shift for ':').
    */
   external fun encodeKey(
     handle: Long,
     keyCode: Int,
     action: Int,
     metaState: Int,
+    consumedMetaState: Int,
     unshiftedCodepoint: Int,
     utf8: ByteArray?
   ): ByteArray?

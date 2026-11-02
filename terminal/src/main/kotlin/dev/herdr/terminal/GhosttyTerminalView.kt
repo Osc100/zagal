@@ -17,13 +17,16 @@ import android.view.ActionMode
 import android.view.Choreographer
 import android.view.GestureDetector
 import android.view.HapticFeedbackConstants
+import android.view.InputDevice
 import android.view.KeyCharacterMap
 import android.view.KeyEvent
 import android.view.Menu
 import android.view.MenuItem
 import android.view.MotionEvent
+import android.view.PointerIcon
 import android.view.ScaleGestureDetector
 import android.view.View
+import android.view.ViewConfiguration
 import android.view.inputmethod.BaseInputConnection
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputConnection
@@ -38,6 +41,7 @@ import kotlin.math.floor
 import kotlin.math.hypot
 import kotlin.math.max
 import kotlin.math.roundToInt
+import kotlin.math.sign
 
 /**
  * Canvas-backed ghostty terminal grid.
@@ -55,6 +59,14 @@ internal class GhosttyTerminalView(context: Context) : View(context) {
 
   /** A link Ctrl+tapped (OSC 8 or a written http(s) URL), for the host to open. */
   var onLink: ((String) -> Unit)? = null
+
+  /** Draws only the background while true; see [TerminalView.held]. */
+  var held = false
+    set(value) {
+      if (field == value) return
+      field = value
+      invalidate()
+    }
 
   /** Sticky-modifier source for accessory-bar keys and IME text (optional). */
   var accessoryBar: TerminalAccessoryBar? = null
@@ -175,6 +187,21 @@ internal class GhosttyTerminalView(context: Context) : View(context) {
   private var scrollbarLen = 0L
   private var lastScrollActivityAt = 0L
   private val scrollbarPaint = Paint(Paint.ANTI_ALIAS_FLAG)
+
+  // ── Mouse state ──
+  // The buttons a program was sent a press for, so it gets their release too.
+  private var mouseButtons = 0
+  // A mouse drag selecting text (when the program doesn't take the mouse).
+  private var mouseSelecting = false
+  private var mouseMoved = false
+  private var lastClickAt = 0L
+  private var lastClickCell = -1
+  // Where the mouse hovers (NaN: not over the grid), and the link under it
+  // while Ctrl is held: viewport cells, row-major, first to last.
+  private var hoverX = Float.NaN
+  private var hoverY = Float.NaN
+  private var hoverLink: IntRange? = null
+  private val linkPaint = Paint()
   private val jumpChipPaint = Paint(Paint.ANTI_ALIAS_FLAG)
   private val jumpChipArrow = Path()
   private val flingRunnable = object : Runnable {
@@ -211,6 +238,11 @@ internal class GhosttyTerminalView(context: Context) : View(context) {
         if (selectionMode || actionMode != null) {
           clearSelection()
           return true
+        }
+        // A program that takes the mouse (htop, lazygit, vim with mouse=a) gets the tap as a click.
+        if (tracksMouse()) {
+          sendMouse(MOUSE_PRESS, MOUSE_LEFT, e.x, e.y, e.metaState, anyPressed = true)
+          sendMouse(MOUSE_RELEASE, MOUSE_LEFT, e.x, e.y, e.metaState, anyPressed = false)
         }
         requestFocus()
         context.getSystemService(InputMethodManager::class.java)
@@ -293,6 +325,9 @@ internal class GhosttyTerminalView(context: Context) : View(context) {
   init {
     isFocusable = true
     isFocusableInTouchMode = true
+    // A hardware key takes the view out of touch mode, where a focused view
+    // gets Android's translucent focus highlight drawn over it: over the whole grid.
+    defaultFocusHighlightEnabled = false
     measureCell()
   }
 
@@ -507,7 +542,7 @@ internal class GhosttyTerminalView(context: Context) : View(context) {
       2 -> {
         val key = if (deltaRows < 0) KeyEvent.KEYCODE_DPAD_UP else KeyEvent.KEYCODE_DPAD_DOWN
         repeat(notches) {
-          GhosttyVt.encodeKey(handle, key, 1, 0, 0, null)?.let(::sendBytes)
+          GhosttyVt.encodeKey(handle, key, 1, 0, 0, 0, null)?.let(::sendBytes)
         }
       }
       else -> {
@@ -536,7 +571,7 @@ internal class GhosttyTerminalView(context: Context) : View(context) {
       val keyCode = charToKeyCode(text[0])
       if (keyCode != KeyEvent.KEYCODE_UNKNOWN) {
         accessoryBar?.consumeSticky()
-        GhosttyVt.encodeKey(handle, keyCode, 1, meta, text[0].lowercaseChar().code, null)
+        GhosttyVt.encodeKey(handle, keyCode, 1, meta, 0, text[0].lowercaseChar().code, null)
           ?.let(::sendBytes)
         return
       }
@@ -548,7 +583,7 @@ internal class GhosttyTerminalView(context: Context) : View(context) {
   fun sendAccessoryKey(keyCode: Int) {
     if (handle == 0L || finished) return
     val meta = accessoryBar?.takeStickyMetaState() ?: 0
-    GhosttyVt.encodeKey(handle, keyCode, 1, meta, 0, null)?.let(::sendBytes)
+    GhosttyVt.encodeKey(handle, keyCode, 1, meta, 0, 0, null)?.let(::sendBytes)
   }
 
   private fun charToKeyCode(char: Char): Int {
@@ -659,6 +694,8 @@ internal class GhosttyTerminalView(context: Context) : View(context) {
     if (dirtyKind == DIRTY_FULL) for (node in rowNodes) node?.discardDisplayList()
     repeat(rowCount) { recordRow(buf, snapCols) }
     syncSelectionUi()
+    // The text under the pointer may have changed: the link with it.
+    if (hoverLink != null) syncHoverLink(ctrl = true)
     invalidate()
   }
 
@@ -941,6 +978,12 @@ internal class GhosttyTerminalView(context: Context) : View(context) {
 
   override fun onAttachedToWindow() {
     super.onAttachedToWindow()
+    // Shown again (a terminal kept while another was on screen): its rows'
+    // drawings went with the window, so record them all before its first frame.
+    if (handle != 0L && rowNodes.any { it != null && !it.hasDisplayList() }) {
+      GhosttyVt.redraw(handle)
+      renderFrame()
+    }
     syncBlinkTimer()
   }
 
@@ -1073,7 +1116,9 @@ internal class GhosttyTerminalView(context: Context) : View(context) {
       if (flags and FLAG_FAINT != 0) paint.alpha = 160
       val x = col * cellWidth
       if (end == col + 1) {
-        canvas.drawText(rowChars, cellTextOff[col], len, x, top + baseline, paint)
+        if (!drawBlock(canvas, codepoint, col, top, bottom, paint)) {
+          canvas.drawText(rowChars, cellTextOff[col], len, x, top + baseline, paint)
+        }
       } else {
         runText.setLength(0)
         for (c in col until end) runText.append(rowChars[cellTextOff[c]])
@@ -1093,6 +1138,47 @@ internal class GhosttyTerminalView(context: Context) : View(context) {
       paint.alpha = 255
       col = end
     }
+  }
+
+  /**
+   * A block element (U+2580–259F: ▀ █ ▐ ▛ ░ …) as rectangles on the cell's own
+   * pixel edges, as ghostty draws them: a font's glyph leaves gaps between
+   * cells, which split pictures made of them (Claude Code's logo). False for
+   * other characters.
+   */
+  private fun drawBlock(canvas: Canvas, codepoint: Int, col: Int, top: Float, bottom: Float, paint: Paint): Boolean {
+    if (codepoint !in 0x2580..0x259F) return false
+    val left = (col * cellWidth).roundToInt().toFloat()
+    val right = ((col + 1) * cellWidth).roundToInt().toFloat()
+    // A part of the cell, in eighths across and down.
+    fun part(x0: Int, y0: Int, x1: Int, y1: Int) = canvas.drawRect(
+      left + ((right - left) * x0 / 8).roundToInt(), top + ((bottom - top) * y0 / 8).roundToInt(),
+      left + ((right - left) * x1 / 8).roundToInt(), top + ((bottom - top) * y1 / 8).roundToInt(),
+      paint,
+    )
+    when (codepoint) {
+      0x2580 -> part(0, 0, 8, 4)
+      in 0x2581..0x2588 -> part(0, 8 - (codepoint - 0x2580), 8, 8)
+      in 0x2589..0x258F -> part(0, 0, 8 - (codepoint - 0x2588), 8)
+      0x2590 -> part(4, 0, 8, 8)
+      in 0x2591..0x2593 -> {
+        // Shades: the whole cell, a quarter, half or three quarters as strong.
+        val alpha = paint.alpha
+        paint.alpha = alpha * (codepoint - 0x2590) / 4
+        part(0, 0, 8, 8)
+        paint.alpha = alpha
+      }
+      0x2594 -> part(0, 0, 8, 1)
+      0x2595 -> part(7, 0, 8, 8)
+      else -> {
+        val quadrants = QUADRANTS[codepoint - 0x2596]
+        if (quadrants and 1 != 0) part(0, 0, 4, 4)
+        if (quadrants and 2 != 0) part(4, 0, 8, 4)
+        if (quadrants and 4 != 0) part(0, 4, 4, 8)
+        if (quadrants and 8 != 0) part(4, 4, 8, 8)
+      }
+    }
+    return true
   }
 
   /**
@@ -1158,11 +1244,13 @@ internal class GhosttyTerminalView(context: Context) : View(context) {
 
   override fun onDraw(canvas: Canvas) {
     canvas.drawColor(defaultBg)
+    if (held) return
     // Rows replay only on a hardware canvas: a software one (a View.draw into
     // a bitmap) gets the background and overlays.
     if (canvas.isHardwareAccelerated) {
       for (node in rowNodes) if (node != null && node.hasDisplayList()) canvas.drawRenderNode(node)
     }
+    drawHoverLink(canvas)
     drawCursor(canvas)
     drawSelectionHandles(canvas)
     drawScrollIndicator(canvas)
@@ -1248,10 +1336,179 @@ internal class GhosttyTerminalView(context: Context) : View(context) {
     }
   }
 
+  // ── Mouse ──
+
+  private val MotionEvent.isMouse
+    get() = isFromSource(InputDevice.SOURCE_MOUSE) && getToolType(0) == MotionEvent.TOOL_TYPE_MOUSE
+
+  /** The program in front tracks the mouse (clicks and motion are its, not ours). */
+  private fun tracksMouse() = handle != 0L && !finished && GhosttyVt.scrollTarget(handle) == 1
+
+  private fun sendMouse(action: Int, button: Int, x: Float, y: Float, meta: Int, anyPressed: Boolean) {
+    GhosttyVt.encodeMouse(
+      handle, action, button, meta, x, y, width, height, cellWidth.roundToInt(), cellHeight, anyPressed
+    )?.let(::sendBytes)
+  }
+
+  /** The button a press or release is about, as the encoder numbers them. */
+  private fun mouseButton(buttons: Int) = when {
+    buttons and MotionEvent.BUTTON_PRIMARY != 0 -> MOUSE_LEFT
+    buttons and MotionEvent.BUTTON_SECONDARY != 0 -> MOUSE_RIGHT
+    buttons and MotionEvent.BUTTON_TERTIARY != 0 -> MOUSE_MIDDLE
+    else -> MOUSE_NONE
+  }
+
+  /**
+   * A mouse, as herdr-app takes one: Ctrl+click opens a link; a program that
+   * tracks the mouse gets its presses, drags and releases (Shift keeps them
+   * ours); otherwise a drag selects and copies, a double-click selects a word,
+   * and a click focuses.
+   */
+  private fun onMouse(event: MotionEvent): Boolean {
+    if (handle == 0L) return false
+    val (x, y, meta) = Triple(event.x, event.y, event.metaState)
+    hoverX = x
+    hoverY = y
+    when (event.actionMasked) {
+      MotionEvent.ACTION_DOWN -> {
+        requestFocus()
+        if (meta and KeyEvent.META_CTRL_ON != 0 && openLinkAt(x, y)) return true
+        val button = mouseButton(event.buttonState)
+        if (tracksMouse() && meta and KeyEvent.META_SHIFT_ON == 0) {
+          mouseButtons = mouseButtons or (1 shl button)
+          sendMouse(MOUSE_PRESS, button, x, y, meta, anyPressed = true)
+          return true
+        }
+        if (button != MOUSE_LEFT) return true
+        if (selectionMode || actionMode != null) clearSelection() else GhosttyVt.clearSelection(handle)
+        val col = (x / cellWidth).toInt().coerceIn(0, cols - 1)
+        val row = (y / cellHeight).toInt().coerceIn(0, rows - 1)
+        val cell = row * cols + col
+        val now = SystemClock.uptimeMillis()
+        val double = cell == lastClickCell && now - lastClickAt <= ViewConfiguration.getDoubleTapTimeout()
+        lastClickAt = if (double) 0L else now
+        lastClickCell = cell
+        if (double) {
+          if (GhosttyVt.selectWord(handle, col, row)) copyMouseSelection()
+          scheduleFrame()
+          return true
+        }
+        dragFrom(col, row, biasRows = 0)
+        mouseSelecting = true
+        mouseMoved = false
+        scheduleFrame()
+      }
+      MotionEvent.ACTION_MOVE -> {
+        if (mouseButtons != 0) {
+          sendMouse(MOUSE_MOTION, mouseButton(event.buttonState), x, y, meta, anyPressed = true)
+        } else if (mouseSelecting) {
+          val col = (x / cellWidth).toInt().coerceIn(0, cols - 1)
+          val row = (y / cellHeight).toInt().coerceIn(0, rows - 1)
+          if (!mouseMoved && col == dragAnchorCol && row == dragAnchorRow) return true
+          mouseMoved = true
+          GhosttyVt.setSelection(handle, dragAnchorCol, dragAnchorRow, col, row)
+          scheduleFrame()
+        }
+      }
+      MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+        if (mouseButtons != 0) {
+          // Every button the program saw go down, now up.
+          for (button in MOUSE_LEFT..MOUSE_MIDDLE) {
+            if (mouseButtons and (1 shl button) != 0) sendMouse(MOUSE_RELEASE, button, x, y, meta, anyPressed = false)
+          }
+          mouseButtons = 0
+        } else if (mouseSelecting) {
+          mouseSelecting = false
+          // Copy on select, as herdr-app does; a plain click only focuses.
+          if (mouseMoved) copyMouseSelection()
+        }
+      }
+    }
+    return true
+  }
+
+  /** The mouse's selection onto the clipboard; it stays on screen until the next click. */
+  private fun copyMouseSelection() {
+    val bytes = GhosttyVt.selectionText(handle) ?: return
+    val clipboard = context.getSystemService(ClipboardManager::class.java) ?: return
+    clipboard.setPrimaryClip(ClipData.newPlainText("terminal", String(bytes, Charsets.UTF_8)))
+  }
+
+  override fun onGenericMotionEvent(event: MotionEvent): Boolean {
+    if (event.isMouse && event.actionMasked == MotionEvent.ACTION_SCROLL && handle != 0L) {
+      // A wheel notch moves three lines, as in Ghostty.
+      val notches = event.getAxisValue(MotionEvent.AXIS_VSCROLL)
+      if (notches != 0f) {
+        lastTouchX = event.x
+        lastTouchY = event.y
+        scrollRows(-(notches * 3).roundToInt().let { if (it == 0) notches.sign.toInt() else it })
+        return true
+      }
+    }
+    return super.onGenericMotionEvent(event)
+  }
+
+  override fun onHoverEvent(event: MotionEvent): Boolean {
+    if (!event.isMouse) return super.onHoverEvent(event)
+    when (event.actionMasked) {
+      MotionEvent.ACTION_HOVER_ENTER, MotionEvent.ACTION_HOVER_MOVE -> {
+        hoverX = event.x
+        hoverY = event.y
+        // Any-motion tracking (mode 1003) reports a pointer with no button held.
+        if (tracksMouse()) sendMouse(MOUSE_MOTION, MOUSE_NONE, event.x, event.y, event.metaState, anyPressed = false)
+        syncHoverLink(event.metaState and KeyEvent.META_CTRL_ON != 0)
+      }
+      MotionEvent.ACTION_HOVER_EXIT -> {
+        hoverX = Float.NaN
+        hoverY = Float.NaN
+        syncHoverLink(ctrl = false)
+      }
+    }
+    return true
+  }
+
+  /** The link under the pointer while [ctrl] is held, underlined; none otherwise. */
+  private fun syncHoverLink(ctrl: Boolean) {
+    val span = if (ctrl && !hoverX.isNaN()) linkSpanAt(hoverX, hoverY) else null
+    pointerIcon = if (span != null) PointerIcon.getSystemIcon(context, PointerIcon.TYPE_HAND) else null
+    if (span == hoverLink) return
+    hoverLink = span
+    invalidate()
+  }
+
+  /** The cells of the link at a pixel position: its neighbors that are the same link. */
+  private fun linkSpanAt(x: Float, y: Float): IntRange? {
+    if (cellWidth <= 0f || cellHeight <= 0) return null
+    val col = (x / cellWidth).toInt()
+    val row = (y / cellHeight).toInt()
+    if (col !in 0 until cols || row !in 0 until rows) return null
+    val link = linkAt(col, row) ?: return null
+    val at = row * cols + col
+    fun same(cell: Int) = linkAt(cell % cols, cell / cols) == link
+    var first = at
+    while (first > 0 && at - first < MAX_LINK_CELLS && same(first - 1)) first--
+    var last = at
+    while (last < rows * cols - 1 && last - at < MAX_LINK_CELLS && same(last + 1)) last++
+    return first..last
+  }
+
+  private fun drawHoverLink(canvas: Canvas) {
+    val span = hoverLink ?: return
+    linkPaint.color = defaultFg
+    val t = underlineThickness
+    for (row in span.first / cols..span.last / cols) {
+      val from = if (row == span.first / cols) span.first % cols else 0
+      val to = if (row == span.last / cols) span.last % cols else cols - 1
+      val bottom = ((row + 1) * cellHeight).toFloat()
+      canvas.drawRect(from * cellWidth, bottom - t, (to + 1) * cellWidth, bottom, linkPaint)
+    }
+  }
+
   // ── Input ──
 
   override fun onTouchEvent(event: MotionEvent): Boolean {
     if (event.actionMasked == MotionEvent.ACTION_DOWN) scroller.abortAnimation()
+    if (event.isMouse) return onMouse(event)
     scaleDetector.onTouchEvent(event)
     if (scaleDetector.isInProgress) {
       if (draggingHandle != HANDLE_NONE) {
@@ -1322,6 +1579,10 @@ internal class GhosttyTerminalView(context: Context) : View(context) {
   }
 
   private fun handleKeyEvent(event: KeyEvent): Boolean {
+    // Ctrl pressed or let go with the mouse over a link: underline it, or stop.
+    if (event.keyCode == KeyEvent.KEYCODE_CTRL_LEFT || event.keyCode == KeyEvent.KEYCODE_CTRL_RIGHT) {
+      syncHoverLink(event.metaState and KeyEvent.META_CTRL_ON != 0)
+    }
     if (handle == 0L || finished) return false
     val action = when (event.action) {
       KeyEvent.ACTION_DOWN -> if (event.repeatCount > 0) 2 else 1
@@ -1331,17 +1592,27 @@ internal class GhosttyTerminalView(context: Context) : View(context) {
     // Sticky accessory-bar modifiers apply to hardware keys too.
     val stickyMeta = if (action == 1) accessoryBar?.takeStickyMetaState() ?: 0 else 0
     val metaState = event.metaState or stickyMeta
-    val unicode = event.getUnicodeChar(
-      metaState and (KeyEvent.META_CTRL_MASK or KeyEvent.META_META_MASK).inv()
-    )
+    val textMeta = metaState and (KeyEvent.META_CTRL_MASK or KeyEvent.META_META_MASK).inv()
+    val unicode = event.getUnicodeChar(textMeta)
     val utf8 = if (unicode != 0 && unicode and KeyCharacterMap.COMBINING_ACCENT == 0) {
       String(Character.toChars(unicode)).toByteArray(Charsets.UTF_8)
     } else {
       null
     }
+    // The modifiers the text used up (Shift for ':', AltGr for '@'). Under the
+    // kitty keyboard protocol (Neovim's) the text goes as typed; otherwise
+    // Shift+; would go as a modified ';' rather than ':'.
+    var consumedMeta = 0
+    if (utf8 != null) {
+      for (mask in intArrayOf(KeyEvent.META_SHIFT_MASK, KeyEvent.META_ALT_MASK)) {
+        if (textMeta and mask != 0 && event.getUnicodeChar(textMeta and mask.inv()) != unicode) {
+          consumedMeta = consumedMeta or (textMeta and mask)
+        }
+      }
+    }
     val unshifted = event.getUnicodeChar(0)
     val bytes = GhosttyVt.encodeKey(
-      handle, event.keyCode, action, metaState, unshifted, utf8
+      handle, event.keyCode, action, metaState, consumedMeta, unshifted, utf8
     ) ?: return false
     if (bytes.isEmpty()) return false
     sendBytes(bytes)
@@ -1375,6 +1646,20 @@ internal class GhosttyTerminalView(context: Context) : View(context) {
   }
 
   private companion object {
+    // ▖ ▗ ▘ ▙ ▚ ▛ ▜ ▝ ▞ ▟ (U+2596–259F): which quarters each fills
+    // (1 upper left, 2 upper right, 4 lower left, 8 lower right).
+    val QUADRANTS = intArrayOf(4, 8, 1, 1 or 4 or 8, 1 or 8, 1 or 2 or 4, 1 or 2 or 8, 2, 2 or 4, 2 or 4 or 8)
+
+    // GhosttyVt.encodeMouse's actions and buttons.
+    const val MOUSE_PRESS = 0
+    const val MOUSE_RELEASE = 1
+    const val MOUSE_MOTION = 2
+    const val MOUSE_NONE = 0
+    const val MOUSE_LEFT = 1
+    const val MOUSE_RIGHT = 2
+    const val MOUSE_MIDDLE = 3
+    // How far a link runs either way from the pointer, at most.
+    const val MAX_LINK_CELLS = 2048
     const val FONT_SIZE_DP = 14f
     // Same bounds and step as the iOS pinch-zoom (UITerminalView).
     const val MIN_FONT_SIZE_DP = 4f
