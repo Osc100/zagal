@@ -3,7 +3,8 @@
 //! `zig build -Dtarget=<abi target>` per ABI, with ANDROID_NDK_HOME set.
 //!
 //! `zig build test` runs the session's tests (src/session.zig) on this
-//! machine; they need no NDK.
+//! machine, and `zig build bench` builds zagal-bench (src/bench.zig) for it;
+//! neither needs the NDK.
 
 const std = @import("std");
 const android_ndk = @import("android_ndk");
@@ -25,6 +26,18 @@ pub fn build(b: *std.Build) !void {
     session.addImport("ghostty-vt", ghostty.module("ghostty-vt"));
     const tests = b.addTest(.{ .root_module = session });
     b.step("test", "Run the session's tests").dependOn(&b.addRunArtifact(tests).step);
+
+    // zagal-bench (src/bench.zig), always optimized as the app's library is.
+    const fast = b.dependency("ghostty", .{ .target = host, .optimize = .ReleaseFast, .simd = false });
+    const bench = b.createModule(.{
+        .root_source_file = b.path("src/bench.zig"),
+        .target = host,
+        .optimize = .ReleaseFast,
+        .link_libc = true,
+    });
+    bench.addImport("ghostty-vt", fast.module("ghostty-vt"));
+    const exe = b.addExecutable(.{ .name = "zagal-bench", .root_module = bench });
+    b.step("bench", "Build zagal-bench").dependOn(&b.addInstallArtifact(exe, .{}).step);
 }
 
 /// libherdrterminal.so for an Android target.

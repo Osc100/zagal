@@ -23,6 +23,12 @@ and look at screenshots. Run one with the connect flow before it:
 unit test can check (`mise run test`: the terminal's drawing on the JVM, the
 native session with `zig build test`) is checked there instead.
 
+`mise run bench` benchmarks the terminal's native side as ghostty benchmarks
+its own: input made once with ghostty-gen, `zagal-bench` (one mode per path
+the view takes: output streaming in, full redraws, scrolling, a selection
+dragged) built for this tree and a base revision (`ZAGAL_BENCH_BASE`, else
+`main`), and hyperfine comparing them.
+
 ## Guidelines
 
 - Match the code around you: its naming, comments and idioms.

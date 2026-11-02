@@ -30,6 +30,11 @@ run = "./gradlew :app:assembleDebug"
 description = "Release APK, signed when ZAGAL_KEYSTORE and ZAGAL_PASSWORD are set (CI)"
 run = "./gradlew :app:assembleRelease"
 
+[tasks.bench]
+description = "Benchmark the terminal's native side against a base revision (ZAGAL_BENCH_BASE, else main)"
+tools = { hyperfine = "1.19.0" }
+run = "terminal/native/bench.sh"
+
 [tasks.e2e]
 description = "End-to-end flows (Maestro) on the connected device or emulator, against a throwaway herdr-core"
 tools = { maestro = "cli-2.12.0" }

@@ -510,9 +510,14 @@ fn endsUrl(byte: u8) bool {
 }
 
 
+/// The bytes a snapshot of a `cols` × `rows` grid may take, as the view sizes its buffer.
+pub fn bufferSize(cols: usize, rows: usize) usize {
+    return header_bytes + rows * (row_header_bytes + cols * cell_record_bytes + cols * max_cell_text_units * 2 + 4);
+}
+
 /// A snapshot buffer for a `cols` × `rows` grid, as the view sizes it.
 fn testBuffer(comptime cols: usize, comptime rows: usize) type {
-    return [header_bytes + rows * (row_header_bytes + cols * cell_record_bytes + cols * max_cell_text_units * 2 + 4)]u8;
+    return [bufferSize(cols, rows)]u8;
 }
 
 /// The header's dirty kind and row record count, after a snapshot.
