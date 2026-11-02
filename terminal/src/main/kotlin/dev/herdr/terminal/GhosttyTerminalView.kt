@@ -122,6 +122,8 @@ internal class GhosttyTerminalView(context: Context) : View(context) {
   private var cursorGlyphFlags = 0
   // Text an input method is composing (CJK), shown at the cursor until it's committed.
   private var preedit = ""
+  // The clipboard key last taken (ClipboardKeys), until it's let go.
+  private var clipboardKey = KeyEvent.KEYCODE_UNKNOWN
 
   // The cursor is an onDraw overlay, so blinking only replays the recorded
   // rows; the grid is untouched.
@@ -677,13 +679,17 @@ internal class GhosttyTerminalView(context: Context) : View(context) {
     clearSelection()
   }
 
+  /** The clipboard's text, or null when it has none. */
+  private fun clipboardText(): String? {
+    val clipboard = context.getSystemService(ClipboardManager::class.java) ?: return null
+    val clip = clipboard.primaryClip?.takeIf { it.itemCount > 0 } ?: return null
+    return clip.getItemAt(0).coerceToText(context)?.toString()?.takeIf { it.isNotEmpty() }
+  }
+
   /** Paste the clipboard, confirming first when it could run commands. */
   fun requestPaste() {
     if (handle == 0L || finished) return
-    val clipboard = context.getSystemService(ClipboardManager::class.java) ?: return
-    val clip = clipboard.primaryClip?.takeIf { it.itemCount > 0 } ?: return
-    val text = clip.getItemAt(0).coerceToText(context)?.toString()
-    if (text.isNullOrEmpty()) return
+    val text = clipboardText() ?: return
     val bytes = text.toByteArray(Charsets.UTF_8)
     if (GhosttyVt.isPasteSafe(bytes)) {
       sendPaste(bytes)
@@ -1245,12 +1251,39 @@ internal class GhosttyTerminalView(context: Context) : View(context) {
     return handleKeyEvent(event)
   }
 
+  /**
+   * A clipboard key ([ClipboardKeys]) copies or pastes, its repeats and
+   * release swallowed with it. With nothing selected to copy or nothing on
+   * the clipboard to paste, it's the program's.
+   */
+  private fun takeClipboardKey(event: KeyEvent): Boolean {
+    if (event.keyCode == clipboardKey) {
+      if (event.action == KeyEvent.ACTION_UP) clipboardKey = KeyEvent.KEYCODE_UNKNOWN
+      return true
+    }
+    if (event.action != KeyEvent.ACTION_DOWN || event.repeatCount > 0) return false
+    when (ClipboardKeys.actionFor(event.keyCode, event.metaState)) {
+      ClipboardKeys.COPY -> {
+        if (GhosttyVt.selectionText(handle) == null) return false
+        copySelection()
+      }
+      ClipboardKeys.PASTE -> {
+        if (clipboardText() == null) return false
+        requestPaste()
+      }
+      else -> return false
+    }
+    clipboardKey = event.keyCode
+    return true
+  }
+
   private fun handleKeyEvent(event: KeyEvent): Boolean {
     // Ctrl pressed or let go with the mouse over a link: underline it, or stop.
     if (event.keyCode == KeyEvent.KEYCODE_CTRL_LEFT || event.keyCode == KeyEvent.KEYCODE_CTRL_RIGHT) {
       syncHoverLink(event.metaState and KeyEvent.META_CTRL_ON != 0)
     }
     if (handle == 0L || finished) return false
+    if (takeClipboardKey(event)) return true
     val action = when (event.action) {
       KeyEvent.ACTION_DOWN -> if (event.repeatCount > 0) 2 else 1
       KeyEvent.ACTION_UP -> 0
