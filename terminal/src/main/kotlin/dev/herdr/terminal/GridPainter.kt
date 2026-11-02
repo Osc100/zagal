@@ -224,18 +224,23 @@ internal class GridPainter(private val context: Context) {
       if (col == selEnd && flags and FLAG_WIDE != 0 && rowIndex < rowSelEndWide.size) {
         rowSelEndWide[rowIndex] = true
       }
-      val selected = selStart >= 0 && col >= selStart && col <= selEnd
+      // A wide character's right half is selected with the character.
+      val at = if (flags and FLAG_SPACER != 0 && col > 0) col - 1 else col
+      val selected = selStart >= 0 && at >= selStart && at <= selEnd
       var effFg = if (flags and FLAG_FG_DEFAULT != 0) defaultFg else fg
       var effBg = if (flags and FLAG_BG_NONE != 0) defaultBg else bg
       if (flags and FLAG_INVERSE != 0) effFg = effBg.also { effBg = effFg }
       if (selected) {
         val themedBg = selectionBg
         if (themedBg != null) {
+          // The text keeps its color (as herdr-app's), unless it would
+          // vanish into the selection's.
           effBg = themedBg
-          selectionFg?.let { effFg = it }
+          effFg = selectionFg ?: readableOn(themedBg, effFg)
         } else {
-          // No themed selection colors: classic fg/bg swap.
-          effFg = effBg.also { effBg = effFg }
+          // No themed selection colors: the default ones swapped, as ghostty's.
+          effBg = defaultFg
+          effFg = defaultBg
         }
       }
       cellFg[col] = effFg
@@ -307,6 +312,15 @@ internal class GridPainter(private val context: Context) {
       paint.alpha = 255
       col = end
     }
+  }
+
+  /**
+   * [color] on [background] when it stands out from it; else whichever of the
+   * default colors stands out more.
+   */
+  private fun readableOn(background: Int, color: Int): Int {
+    if (contrast(color, background) >= MIN_SELECTED_CONTRAST) return color
+    return if (contrast(defaultFg, background) >= contrast(defaultBg, background)) defaultFg else defaultBg
   }
 
   /** The paint a cell's character is drawn with: its font, by the character and the cell's style. */
@@ -475,6 +489,24 @@ internal class GridPainter(private val context: Context) {
   }
 
   companion object {
+    /** WCAG's contrast ratio of two colors (1–21). */
+    fun contrast(a: Int, b: Int): Double {
+      val (light, dark) = listOf(luminance(a), luminance(b)).sortedDescending()
+      return (light + 0.05) / (dark + 0.05)
+    }
+
+    private fun luminance(color: Int): Double {
+      fun channel(c: Int): Double {
+        val v = c / 255.0
+        return if (v <= 0.03928) v / 12.92 else Math.pow((v + 0.055) / 1.055, 2.4)
+      }
+      return 0.2126 * channel(color shr 16 and 0xFF) + 0.7152 * channel(color shr 8 and 0xFF) +
+        0.0722 * channel(color and 0xFF)
+    }
+
+    // Below this, selected text takes a default color.
+    private const val MIN_SELECTED_CONTRAST = 1.5
+
     // ▖ ▗ ▘ ▙ ▚ ▛ ▜ ▝ ▞ ▟ (U+2596–259F): which quarters each fills
     // (1 upper left, 2 upper right, 4 lower left, 8 lower right).
     private val QUADRANTS = intArrayOf(4, 8, 1, 1 or 4 or 8, 1 or 8, 1 or 2 or 4, 1 or 2 or 8, 2, 2 or 4, 2 or 4 or 8)
