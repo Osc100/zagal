@@ -1,0 +1,11 @@
+# A space of their own for the scenarios (e2e/run.sh): a new shell, on screen.
+appId: io.github.osc100.zagal.e2e
+name: scenario space
+---
+- launchApp:
+    stopApp: false
+- tapOn: New space
+- tapOn: Terminal
+- extendedWaitUntil:
+    visible: ESC
+    timeout: 30000

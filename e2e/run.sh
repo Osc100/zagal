@@ -59,8 +59,9 @@ flows() {
     -e HOST="e2e@127.0.0.1:$port" -e MARK="$mark" "$@"
 }
 
-# For scenarios: the terminal connecting opened, and what they do with it.
-term() { core ls | grep -oE '"address":"[^"]+"' | head -1 | cut -d'"' -f4; }
+# For scenarios: their terminal (scenarios() opens it), and what they do with it.
+addresses() { core ls | grep -oE '"address":"[^"]+"' | cut -d'"' -f4 | sort; }
+term() { echo "$scenario_term"; }
 # Runs a command in it, as if typed.
 send() { core send "$(term)" "$1" >/dev/null; }
 # The screen, as out/<scenario>-<name>.png.
@@ -89,6 +90,12 @@ pixels() { python3 -I e2e/scenarios/pixels.py "$@"; }
 
 scenarios() {
   mkdir -p "$out"
+  # A space of their own, on screen whatever the flows before left there.
+  local before
+  before=$(addresses)
+  flows e2e/scenarios/space.yaml
+  scenario_term=$(comm -13 <(echo "$before") <(addresses) | head -1)
+  [[ -n $scenario_term ]] || { echo "e2e: no terminal for the scenarios" >&2; exit 1; }
   for script in "$@"; do
     scenario=$(basename "$script" .sh)
     echo "e2e: scenario $scenario"
