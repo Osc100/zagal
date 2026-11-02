@@ -104,12 +104,23 @@ class TerminalHost(
                 }
                 seen = true
                 stream = a
+                // Stream listeners run on the client's thread; the view is the main thread's.
+                // What arrives while the main thread is busy is written in one go (as
+                // herdr-app does), so a backlog is parsed before the next frame rather
+                // than one chunk per frame. Only the chunk that finds the queue empty posts.
+                val pending = ArrayDeque<ByteArray>()
                 a.onData { bytes ->
-                    // Stream listeners run on the client's thread; the view is the main thread's.
-                    made.post {
-                        made.write(bytes)
-                        // Parsed: credit the stream for them.
-                        a.consumed(bytes.size)
+                    val first = synchronized(pending) {
+                        pending.addLast(bytes)
+                        pending.size == 1
+                    }
+                    if (first) made.post {
+                        val batch = synchronized(pending) { pending.toList().also { pending.clear() } }
+                        for (chunk in batch) {
+                            made.write(chunk)
+                            // Parsed: credit the stream for them.
+                            a.consumed(chunk.size)
+                        }
                     }
                 }
                 a.onEnd { end ->
