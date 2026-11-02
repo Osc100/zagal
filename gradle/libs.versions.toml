@@ -14,7 +14,7 @@ core-ktx = "1.19.1"
 jsch = "2.28.8"
 bouncycastle = "1.86"
 biometric = "1.1.0"
-fragment = "1.8.9"
+fragment = "1.9.1"
 
 [libraries]
 androidsvg = { module = "com.caverock:androidsvg-aar", version.ref = "androidsvg" }
