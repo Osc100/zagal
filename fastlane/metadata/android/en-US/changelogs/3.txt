@@ -1,10 +1,11 @@
 - Space and tab menus (long-press or right-click): rename, close
 - Drag spaces to reorder
 - Pin agents to the top
-- Git worktrees: new, open and remove from a space's menu
+- Git worktrees in a space's menu
 - Mouse in TUIs: click, drag, scroll, hover; drag to select; Ctrl+hover links
 - New tabs open in the current terminal's folder
-- Fixed: ":" not reaching Neovim from a hardware keyboard
-- Fixed: white flash when typing on a hardware keyboard
+- Exit in the background notification
+- Fixed: ":" in Neovim from a hardware keyboard
+- Fixed: white flash on hardware keyboard input
 - Switching terminals no longer jumps in width
 - Block characters draw without gaps

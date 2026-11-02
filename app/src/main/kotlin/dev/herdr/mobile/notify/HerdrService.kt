@@ -1,17 +1,20 @@
 // Keeps the hosts connected while the app is out of sight, so alerts still
 // come: Android freezes a background app's sockets, not a foreground
 // service's. Its notification is the one that's always there: the agents
-// working now, else where the phone is connected.
+// working now, else where the phone is connected; expanded, it has Exit,
+// which ends the app until it's opened again.
 
 package dev.herdr.mobile.notify
 
 import android.app.NotificationManager
+import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
+import android.os.Process
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
 import dev.herdr.mobile.R
@@ -25,6 +28,9 @@ import kotlinx.coroutines.launch
 
 class HerdrService : Service() {
     private val scope = MainScope()
+
+    // Exit was tapped: the process ends once Android has the service stopped.
+    private var exiting = false
 
     override fun onCreate() {
         super.onCreate()
@@ -42,13 +48,32 @@ class HerdrService : Service() {
         }
     }
 
-    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int) = START_STICKY
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        if (intent?.action == EXIT) {
+            // Stopped first: a sticky service whose process just died is started again.
+            exiting = true
+            ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
+            stopSelf()
+            return START_NOT_STICKY
+        }
+        return START_STICKY
+    }
 
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onDestroy() {
         scope.cancel()
         super.onDestroy()
+        if (exiting) Process.killProcess(Process.myPid())
+    }
+
+    private val exit by lazy {
+        PendingIntent.getService(
+            this,
+            0,
+            Intent(this, HerdrService::class.java).setAction(EXIT),
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+        )
     }
 
     private fun notification(working: List<Working>, session: Session) =
@@ -59,6 +84,8 @@ class HerdrService : Service() {
             .setShowWhen(false)
             .setCategory(NotificationCompat.CATEGORY_PROGRESS)
             .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
+            // Shown when the notification is expanded.
+            .addAction(0, "Exit", exit)
             .apply {
                 if (working.isEmpty()) {
                     setContentTitle(session.host.ifEmpty { "Zagal" })
@@ -76,6 +103,7 @@ class HerdrService : Service() {
 
     companion object {
         private const val ID = 2
+        private const val EXIT = "dev.herdr.mobile.EXIT"
         private val type = if (Build.VERSION.SDK_INT >= 34) ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE else 0
 
         fun start(context: Context) {
