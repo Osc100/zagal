@@ -15,6 +15,7 @@ import android.graphics.Typeface
 import android.net.Uri
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.view.KeyEvent
 import android.view.ViewGroup
 import androidx.core.content.res.ResourcesCompat
@@ -69,6 +70,9 @@ private const val SETTLED_MS = 32L
 
 /** ...or after this long, if it doesn't redraw at all (ms). */
 private const val SETTLE_MAX_MS = 100L
+
+/** The most a main-thread turn spends parsing output before letting a frame or a touch in (ms). */
+private const val PARSE_BUDGET_MS = 8L
 
 /** One attached terminal: its view, its stream and how the attach is going. */
 private class Live(val view: TerminalView, val state: MutableStateFlow<PaneState>) {
@@ -169,33 +173,24 @@ class TerminalHost(
                     main.postDelayed(cap, SETTLE_MAX_MS)
                 }
                 // Stream listeners run on the client's thread; the view is the main thread's.
-                // What arrives while the main thread is busy is written in one go (as
-                // herdr-app does), so a backlog is parsed before the next frame rather
-                // than one chunk per frame. Only the chunk that finds the queue empty posts,
-                // to the main thread rather than the view: one off screen is detached, and
-                // its output must still be parsed and credited.
-                val pending = ArrayDeque<ByteArray>()
-                a.onData { bytes ->
-                    val first = synchronized(pending) {
-                        pending.addLast(bytes)
-                        pending.size == 1
-                    }
-                    if (first) main.post {
-                        val batch = synchronized(pending) { pending.toList().also { pending.clear() } }
-                        if (live.stream !== a) return@post
-                        for (chunk in batch) {
+                // What arrives while the main thread is busy is written together, so a
+                // backlog is parsed before the next frame rather than one chunk per frame,
+                // but in turns of at most PARSE_BUDGET_MS, so a flood doesn't hold frames
+                // and touches until it's all in. Posted to the main thread rather than the
+                // view: one off screen is detached, and its output must still be parsed and
+                // credited. The end comes in order, after the output before it.
+                val backlog = Backlog<End>(
+                    now = SystemClock::uptimeMillis,
+                    post = { main.post(it) },
+                    budgetMs = PARSE_BUDGET_MS,
+                    write = { chunk ->
+                        if (live.stream === a) {
                             made.write(chunk)
                             // Parsed: credit the stream for them.
                             a.consumed(chunk.size)
                         }
-                        if (made.held) {
-                            main.removeCallbacks(settled)
-                            main.postDelayed(settled, SETTLED_MS)
-                        }
-                    }
-                }
-                a.onEnd { end ->
-                    main.post {
+                    },
+                    ended = { end ->
                         if (live.stream === a) live.stream = null
                         when (end) {
                             is End.Lost -> live.state.value = PaneState.Waiting
@@ -204,8 +199,16 @@ class TerminalHost(
                                 live.state.value = PaneState.Ended(end.summary)
                             }
                         }
-                    }
-                }
+                    },
+                    afterTurn = {
+                        if (made.held) {
+                            main.removeCallbacks(settled)
+                            main.postDelayed(settled, SETTLED_MS)
+                        }
+                    },
+                )
+                a.onData(backlog::add)
+                a.onEnd(backlog::end)
                 a.focus(shown.value === live)
                 if (!settling) live.state.value = PaneState.Live
                 try {
