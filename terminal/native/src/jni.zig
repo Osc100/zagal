@@ -643,6 +643,78 @@ fn selectionText(env: Env, _: c.jobject, handle: c.jlong) callconv(.c) c.jbyteAr
     return newBytes(env, out.written());
 }
 
+/// The link at a viewport cell: its OSC 8 hyperlink, or else the http(s) URL
+/// written across the cell's line (soft wraps included); null when neither.
+fn linkAt(
+    env: Env,
+    _: c.jobject,
+    handle: c.jlong,
+    col: c.jint,
+    row: c.jint,
+) callconv(.c) c.jbyteArray {
+    const session = fromHandle(handle) orelse return null;
+    var pin = session.viewportPin(col, row) orelse return null;
+    // A wide character's right half belongs to its left.
+    if (pin.rowAndCell().cell.wide == .spacer_tail and pin.x > 0) pin.x -= 1;
+    if (hyperlinkUri(pin)) |uri| return newBytes(env, uri);
+
+    const screen = session.term.screens.active;
+    const sel = screen.selectLine(.{
+        .pin = pin,
+        .whitespace = null,
+        .semantic_prompt_boundary = false,
+    }) orelse return null;
+    var line = screen.selectionStringMap(alloc, .{ .sel = sel, .trim = false }) catch return null;
+    defer line.deinit(alloc);
+    for (0..line.map.count()) |i| {
+        const at = line.map.get(i) orelse continue;
+        if (at.node != pin.node or at.x != pin.x or at.y != pin.y) continue;
+        const url = urlAround(line.string, i) orelse return null;
+        return newBytes(env, url);
+    }
+    return null;
+}
+
+fn hyperlinkUri(pin: vt.Pin) ?[]const u8 {
+    const page = pin.node.page();
+    const cell = page.getRowAndCell(pin.x, pin.y).cell;
+    if (!cell.hyperlink) return null;
+    const id = page.lookupHyperlink(cell) orelse return null;
+    return page.hyperlink_set.get(page.memory, id).uri.slice(page.memory);
+}
+
+/// The http(s) URL in `text` that covers byte `at`, less the punctuation
+/// that usually follows one in prose (a period, an unmatched parenthesis).
+fn urlAround(text: []const u8, at: usize) ?[]const u8 {
+    var start = at + 1;
+    while (true) {
+        if (start == 0) return null;
+        start -= 1;
+        const rest = text[start..];
+        if (std.mem.startsWith(u8, rest, "https://") or std.mem.startsWith(u8, rest, "http://")) break;
+        if (endsUrl(text[start])) return null;
+    }
+    var end = start;
+    while (end < text.len and !endsUrl(text[end])) end += 1;
+    while (end > start) {
+        const url = text[start..end];
+        const last = url[url.len - 1];
+        const unmatched = (last == ')' and std.mem.count(u8, url, "(") < std.mem.count(u8, url, ")")) or
+            (last == ']' and std.mem.count(u8, url, "[") < std.mem.count(u8, url, "]"));
+        if (!unmatched and std.mem.indexOfScalar(u8, ".,;:!?", last) == null) break;
+        end -= 1;
+    }
+    const url = text[start..end];
+    if (at >= end or std.mem.endsWith(u8, url, "://")) return null;
+    return url;
+}
+
+/// Bytes a URL doesn't run through: whitespace and controls, quotes and angle
+/// brackets, and anything non-ASCII (a TUI's box drawing around it).
+fn endsUrl(byte: u8) bool {
+    return byte <= ' ' or byte >= 0x7F or std.mem.indexOfScalar(u8, "<>\"'`", byte) != null;
+}
+
 fn isPasteSafe(env: Env, _: c.jobject, data: c.jbyteArray) callconv(.c) c.jboolean {
     const bytes = bytesOf(env, data) orelse return c.JNI_TRUE;
     defer alloc.free(bytes);
@@ -773,6 +845,7 @@ const methods = [_]c.JNINativeMethod{
     method("setSelection", "(JIIII)Z", &setSelection),
     method("clearSelection", "(J)V", &clearSelection),
     method("selectionText", "(J)[B", &selectionText),
+    method("linkAt", "(JII)[B", &linkAt),
     method("isPasteSafe", "([B)Z", &isPasteSafe),
     method("encodePaste", "(J[B)[B", &encodePaste),
 };

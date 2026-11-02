@@ -29,6 +29,7 @@ against it.
 class TerminalView(context: Context) : LinearLayout {
     var onInput: ((ByteArray) -> Unit)?             // bytes for the PTY
     var onResize: ((cols: Int, rows: Int) -> Unit)? // after layout and on every change
+    var onLink: ((String) -> Unit)?                 // Ctrl+tap or long-press "Open link" (OSC 8 or http(s) text)
     fun write(data: ByteArray, done: (() -> Unit)? = null)
     fun finish(exitCode: Int)                       // stop forwarding input
     fun destroy()                                   // free native state

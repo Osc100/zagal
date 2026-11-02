@@ -111,6 +111,12 @@ internal object GhosttyVt {
   /** Active selection as UTF-8 (plain, unwrapped, trimmed), or null if none. */
   external fun selectionText(handle: Long): ByteArray?
 
+  /**
+   * The link at a viewport cell as UTF-8: its OSC 8 hyperlink, or else an
+   * http(s) URL written across its line (soft wraps included); null if none.
+   */
+  external fun linkAt(handle: Long, col: Int, row: Int): ByteArray?
+
   /** Conservative check: newlines / bracketed-paste escapes are unsafe. */
   external fun isPasteSafe(data: ByteArray): Boolean
 

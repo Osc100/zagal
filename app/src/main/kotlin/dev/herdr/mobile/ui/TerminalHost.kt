@@ -7,8 +7,11 @@
 
 package dev.herdr.mobile.ui
 
+import android.content.ActivityNotFoundException
 import android.content.Context
+import android.content.Intent
 import android.graphics.Typeface
+import android.net.Uri
 import android.view.ViewGroup
 import androidx.core.content.res.ResourcesCompat
 import dev.herdr.mobile.R
@@ -82,6 +85,7 @@ class TerminalHost(
                 size.value = cols to rows
                 stream?.resize(cols, rows)
             }
+            onLink = ::openLink
         }
         view = made
         job = scope.launch {
@@ -180,6 +184,20 @@ class TerminalHost(
                 activeForeground = colors.solidForeground.hex(),
             ),
         )
+    }
+
+    /**
+     * A Ctrl+tapped link, in the browser. Only http(s): an OSC 8 target is
+     * whatever the program wrote, and other schemes (intent:, file:, app
+     * links) aren't for a terminal to open.
+     */
+    private fun openLink(link: String) {
+        val uri = Uri.parse(link)
+        if (uri.scheme?.lowercase() !in setOf("http", "https") || uri.host.isNullOrEmpty()) return
+        try {
+            context.startActivity(Intent(Intent.ACTION_VIEW, uri).addCategory(Intent.CATEGORY_BROWSABLE))
+        } catch (_: ActivityNotFoundException) {
+        }
     }
 
     private val typefaces = mutableMapOf<String?, Typeface?>()

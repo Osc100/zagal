@@ -56,9 +56,18 @@ class TerminalView(context: Context) : LinearLayout(context) {
     /** The grid's size in cells; fires once laid out and on every change. */
     var onResize: ((cols: Int, rows: Int) -> Unit)? = null
 
+    /**
+     * A link the user Ctrl+tapped (a keyboard's Ctrl, or the key bar's) or
+     * picked from the long-press toolbar's "Open link": an
+     * OSC 8 hyperlink's target as the program gave it, or an http(s) URL
+     * written in the terminal. Opening it is the host's call.
+     */
+    var onLink: ((String) -> Unit)? = null
+
     private val terminal = GhosttyTerminalView(context).also { view ->
         view.onInputBytes = { bytes -> onInput?.invoke(bytes) }
         view.onGridResize = { cols, rows -> onResize?.invoke(cols, rows) }
+        view.onLink = { link -> onLink?.invoke(link) }
     }
 
     private val accessoryBar = TerminalAccessoryBar(context).also { bar ->
