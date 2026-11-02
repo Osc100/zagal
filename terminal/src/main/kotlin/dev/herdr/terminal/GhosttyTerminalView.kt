@@ -138,11 +138,8 @@ internal class GhosttyTerminalView(context: Context) : View(context) {
     }
   }
 
-  private var framePending = false
-  private val frameCallback = Choreographer.FrameCallback {
-    framePending = false
-    renderFrame()
-  }
+  private val frameCallback: Choreographer.FrameCallback = Choreographer.FrameCallback { if (pacer.fired()) renderFrame() }
+  private val pacer: FramePacer = FramePacer { Choreographer.getInstance().postFrameCallback(frameCallback) }
 
   private var scrollAccum = 0f
   private var lastTouchX = 0f
@@ -384,10 +381,8 @@ internal class GhosttyTerminalView(context: Context) : View(context) {
   }
 
   fun destroy() {
-    if (framePending) {
-      Choreographer.getInstance().removeFrameCallback(frameCallback)
-      framePending = false
-    }
+    if (pacer.pending) Choreographer.getInstance().removeFrameCallback(frameCallback)
+    pacer.detach()
     blinkScheduled = false
     removeCallbacks(blinkRunnable)
     scroller.abortAnimation()
@@ -547,11 +542,7 @@ internal class GhosttyTerminalView(context: Context) : View(context) {
 
   // ── Rendering ──
 
-  private fun scheduleFrame() {
-    if (framePending) return
-    framePending = true
-    Choreographer.getInstance().postFrameCallback(frameCallback)
-  }
+  private fun scheduleFrame() = pacer.request()
 
   private fun renderFrame() {
     val buf = snapshotBuf ?: return
@@ -883,9 +874,15 @@ internal class GhosttyTerminalView(context: Context) : View(context) {
 
   override fun onAttachedToWindow() {
     super.onAttachedToWindow()
-    // Shown again (a terminal kept while another was on screen): its rows'
-    // drawings went with the window, so record them all before its first frame.
-    rerecordLostRows()
+    // Shown again (a terminal kept while another was on screen): what it
+    // missed meanwhile, or rows whose drawings went with the window, all
+    // recorded again before its first frame.
+    if (pacer.attach() && handle != 0L) {
+      GhosttyVt.redraw(handle)
+      renderFrame()
+    } else {
+      rerecordLostRows()
+    }
     syncBlinkTimer()
   }
 
@@ -903,6 +900,7 @@ internal class GhosttyTerminalView(context: Context) : View(context) {
 
   override fun onDetachedFromWindow() {
     super.onDetachedFromWindow()
+    pacer.detach()
     syncBlinkTimer()
   }
 
