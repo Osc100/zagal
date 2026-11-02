@@ -99,8 +99,9 @@ scenarios() {
   for script in "$@"; do
     scenario=$(basename "$script" .sh)
     echo "e2e: scenario $scenario"
-    # Each starts at a shell prompt: whatever the last left running, stopped.
-    core keys "$(term)" ctrl+c >/dev/null 2>&1 || true
+    # Each starts at a shell prompt: the last one's pattern stopped. (Killed:
+    # the shell's commands ignore Ctrl+C's SIGINT.)
+    on_host pkill -x sleep >/dev/null 2>&1 || true
     send clear
     # shellcheck source=/dev/null
     source "$script"
