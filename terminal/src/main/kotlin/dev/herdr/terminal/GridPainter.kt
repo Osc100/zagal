@@ -463,6 +463,17 @@ internal class GridPainter(private val context: Context) {
   }
 
   companion object {
+    /**
+     * How the cursor shows, as ghostty decides it ([style] the program's), or
+     * null when it doesn't: unfocused it's a hollow box, shown even mid-blink.
+     */
+    fun cursorShape(style: Int, visible: Boolean, focused: Boolean, blinkedOff: Boolean): Int? = when {
+      !visible -> null
+      !focused -> CURSOR_STYLE_BLOCK_HOLLOW
+      blinkedOff -> null
+      else -> style
+    }
+
     /** WCAG's contrast ratio of two colors (1–21). */
     fun contrast(a: Int, b: Int): Double {
       val (light, dark) = listOf(luminance(a), luminance(b)).sortedDescending()

@@ -869,6 +869,8 @@ internal class GhosttyTerminalView(context: Context) : View(context) {
   override fun onWindowFocusChanged(hasWindowFocus: Boolean) {
     super.onWindowFocusChanged(hasWindowFocus)
     syncBlinkTimer()
+    // Hollow without focus, solid with it.
+    invalidate()
   }
 
   override fun onAttachedToWindow() {
@@ -984,10 +986,13 @@ internal class GhosttyTerminalView(context: Context) : View(context) {
   }
 
   private fun drawCursor(canvas: Canvas) {
-    if (!cursorVisible || cursorX < 0 || cursorY < 0) return
-    if (cursorBlinks && blinkScheduled && !blinkPhaseOn) return
+    if (cursorX < 0 || cursorY < 0) return
+    // Focus is the window's: a menu or dialog over the terminal takes it.
+    val style = GridPainter.cursorShape(
+      cursorStyle, cursorVisible, focused = hasWindowFocus(), blinkedOff = cursorBlinks && blinkScheduled && !blinkPhaseOn,
+    ) ?: return
     painter.drawCursor(
-      canvas, cursorX, cursorY, cursorStyle, cursorColor, cursorWide, cursorGlyph, cursorGlyphLength, cursorGlyphFlags,
+      canvas, cursorX, cursorY, style, cursorColor, cursorWide, cursorGlyph, cursorGlyphLength, cursorGlyphFlags,
     )
   }
 

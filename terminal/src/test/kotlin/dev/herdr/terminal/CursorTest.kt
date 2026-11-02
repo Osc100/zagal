@@ -5,6 +5,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.GraphicsMode
+import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
 @RunWith(RobolectricTestRunner::class)
@@ -41,5 +42,16 @@ class CursorTest {
     val pixels = grid.cellPixels(0, 0)
     assertTrue(share(pixels, Grid.FG, tolerance = 8) > 0.4, "solid")
     assertTrue(share(pixels, Grid.BG, tolerance = 40) > 0.05, "the W, in the background color")
+  }
+
+  @Test
+  fun unfocusedItsAHollowBoxEvenMidBlink() {
+    val bar = GridPainter.CURSOR_STYLE_BAR
+    val hollow = GridPainter.CURSOR_STYLE_BLOCK_HOLLOW
+    assertEquals(bar, GridPainter.cursorShape(bar, visible = true, focused = true, blinkedOff = false))
+    assertEquals(null, GridPainter.cursorShape(bar, visible = true, focused = true, blinkedOff = true))
+    assertEquals(hollow, GridPainter.cursorShape(bar, visible = true, focused = false, blinkedOff = false))
+    assertEquals(hollow, GridPainter.cursorShape(bar, visible = true, focused = false, blinkedOff = true))
+    assertEquals(null, GridPainter.cursorShape(bar, visible = false, focused = false, blinkedOff = false))
   }
 }
