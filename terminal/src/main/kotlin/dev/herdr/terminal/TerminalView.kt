@@ -2,6 +2,7 @@ package dev.herdr.terminal
 
 import android.content.Context
 import android.graphics.Typeface
+import android.view.KeyEvent
 import android.widget.LinearLayout
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
@@ -125,6 +126,19 @@ class TerminalView(context: Context) : LinearLayout(context) {
         val rootInsets = rootWindowInsets ?: return
         syncAccessoryBar(WindowInsetsCompat.toWindowInsetsCompat(rootInsets, this))
     }
+
+    /** A cell's size in pixels (width, height), for the host's display facts. */
+    val cellPixels: Pair<Int, Int> get() = terminal.cellPixels
+
+    /** Whether programs may copy to the phone's clipboard (OSC 52); on by default. */
+    fun setClipboardWrite(allowed: Boolean) = terminal.setClipboardWrite(allowed)
+
+    /**
+     * Hands the terminal a hardware keyboard's key that arrived while focus was
+     * elsewhere on screen; it takes focus and the key. False for the keys it
+     * leaves alone (system keys: back, volume, media).
+     */
+    fun takeHardwareKey(event: KeyEvent): Boolean = terminal.takeHardwareKey(event)
 
     /** When the key bar shows (default [KeyBarMode.ALWAYS]). */
     fun setKeyBar(mode: KeyBarMode) {

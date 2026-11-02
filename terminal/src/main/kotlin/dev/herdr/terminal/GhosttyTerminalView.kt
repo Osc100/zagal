@@ -89,6 +89,9 @@ internal class GhosttyTerminalView(context: Context) : View(context) {
   private var cellHeight = 0
   private var baseline = 0f
   private val underlineThickness = max(1f, resources.displayMetrics.density)
+  // Double, curly, dotted and dashed underlines, and colored ones.
+  private val decorationPaint = Paint(Paint.ANTI_ALIAS_FLAG)
+  private val curlyPath = Path()
 
   // ── Grid state ──
   private var cols = INITIAL_COLS
@@ -107,6 +110,8 @@ internal class GhosttyTerminalView(context: Context) : View(context) {
   private var cellTextOff = IntArray(0)
   private var cellTextLen = IntArray(0)
   private var cellFlags = IntArray(0)
+  private var cellUnderline = IntArray(0)
+  private var cellUnderlineColor = IntArray(0)
   private var rowSelStart = IntArray(0)
   private var rowSelEnd = IntArray(0)
   private var rowSelEndWide = BooleanArray(0)
@@ -430,6 +435,7 @@ internal class GhosttyTerminalView(context: Context) : View(context) {
     if (response != null && response.isNotEmpty() && !finished) {
       onInputBytes?.invoke(response)
     }
+    GhosttyVt.takeClipboard(handle)?.let(::copyFromProgram)
     holdBlinkSolid()
     scheduleFrame()
   }
@@ -602,6 +608,8 @@ internal class GhosttyTerminalView(context: Context) : View(context) {
     cellTextOff = IntArray(cols)
     cellTextLen = IntArray(cols)
     cellFlags = IntArray(cols)
+    cellUnderline = IntArray(cols)
+    cellUnderlineColor = IntArray(cols)
     rowSelStart = IntArray(rows) { -1 }
     rowSelEnd = IntArray(rows) { -1 }
     rowSelEndWide = BooleanArray(rows)
@@ -641,6 +649,10 @@ internal class GhosttyTerminalView(context: Context) : View(context) {
     buf.int // row count (== rowCount)
     cursorBlinks = buf.int != 0
     cursorColor = buf.int
+    // Synchronized output: the rows are the frame the program left on screen
+    // when its update began. Look again shortly; the hold ends with the
+    // update, or on its own after a second.
+    if (buf.int != 0) postDelayed(::scheduleFrame, HOLD_POLL_MS)
     syncBlinkTimer()
 
     // Everything changed: rows the snapshot leaves out show the background.
@@ -705,6 +717,20 @@ internal class GhosttyTerminalView(context: Context) : View(context) {
       scheduleFrame()
       actionMode?.invalidate()
     }
+  }
+
+  /** A cell's size in pixels, width rounded as the terminal is told it. */
+  val cellPixels: Pair<Int, Int> get() = cellWidth.roundToInt() to cellHeight
+
+  /** Whether programs may copy to the clipboard (OSC 52); on by default. */
+  fun setClipboardWrite(allowed: Boolean) {
+    if (handle != 0L) GhosttyVt.setClipboardWrite(handle, allowed)
+  }
+
+  /** Text the program copied (OSC 52), onto the phone's clipboard. */
+  private fun copyFromProgram(bytes: ByteArray) {
+    val clipboard = context.getSystemService(ClipboardManager::class.java) ?: return
+    clipboard.setPrimaryClip(ClipData.newPlainText("terminal", String(bytes, Charsets.UTF_8)))
   }
 
   private fun copySelection() {
@@ -971,7 +997,8 @@ internal class GhosttyTerminalView(context: Context) : View(context) {
       val textOff = buf.short.toInt() and 0xFFFF
       val textLen = buf.short.toInt() and 0xFFFF
       val flags = buf.short.toInt() and 0xFFFF
-      buf.short // pad
+      val underline = buf.short.toInt() and 0xFFFF
+      val underlineColor = buf.int
       if (col >= colCount) continue
       if (col == selEnd && flags and FLAG_WIDE != 0 && rowIndex < rowSelEndWide.size) {
         rowSelEndWide[rowIndex] = true
@@ -995,6 +1022,8 @@ internal class GhosttyTerminalView(context: Context) : View(context) {
       cellTextOff[col] = textOff
       cellTextLen[col] = textLen
       cellFlags[col] = flags
+      cellUnderline[col] = underline
+      cellUnderlineColor[col] = underlineColor
     }
     buf.position(nextRecord)
     if (canvas == null) return
@@ -1054,7 +1083,7 @@ internal class GhosttyTerminalView(context: Context) : View(context) {
         val cx = c * cellWidth
         val span = cellSpan(cellFlags[c])
         if (cellFlags[c] and FLAG_UNDERLINE != 0) {
-          canvas.drawRect(cx, bottom - underlineThickness, cx + span, bottom, paint)
+          drawUnderline(canvas, cellUnderline[c], cellUnderlineColor[c], cx, span, bottom, paint)
         }
         if (cellFlags[c] and FLAG_STRIKETHROUGH != 0) {
           val mid = top + cellHeight / 2f
@@ -1063,6 +1092,60 @@ internal class GhosttyTerminalView(context: Context) : View(context) {
       }
       paint.alpha = 255
       col = end
+    }
+  }
+
+  /**
+   * One cell's underline in its SGR 4 style, in its SGR 58 color or else the
+   * text's ([paint], faint included). A plain one is the text-colored bar.
+   */
+  private fun drawUnderline(canvas: Canvas, style: Int, color: Int, x: Float, span: Float, bottom: Float, paint: Paint) {
+    val t = underlineThickness
+    if (style <= UNDERLINE_SINGLE && color == 0) {
+      canvas.drawRect(x, bottom - t, x + span, bottom, paint)
+      return
+    }
+    val p = decorationPaint
+    p.color = if (color != 0) color else paint.color
+    p.alpha = paint.alpha
+    p.style = Paint.Style.FILL
+    when (style) {
+      UNDERLINE_DOUBLE -> {
+        canvas.drawRect(x, bottom - t, x + span, bottom, p)
+        canvas.drawRect(x, bottom - 3 * t, x + span, bottom - 2 * t, p)
+      }
+      UNDERLINE_CURLY -> {
+        // One wave per cell, peak to trough within the bottom of the cell.
+        val amplitude = t * 1.5f
+        val mid = bottom - amplitude - t / 2
+        curlyPath.reset()
+        curlyPath.moveTo(x, mid)
+        var at = x
+        val half = cellWidth / 2
+        var up = true
+        while (at < x + span - 0.01f) {
+          val end = minOf(at + half, x + span)
+          curlyPath.quadTo((at + end) / 2, if (up) mid - amplitude * 2 else mid + amplitude * 2, end, mid)
+          at = end
+          up = !up
+        }
+        p.style = Paint.Style.STROKE
+        p.strokeWidth = t
+        canvas.drawPath(curlyPath, p)
+      }
+      UNDERLINE_DOTTED -> {
+        var at = x + t / 2
+        while (at < x + span) {
+          canvas.drawCircle(at, bottom - t / 2, t / 2, p)
+          at += t * 2
+        }
+      }
+      UNDERLINE_DASHED -> {
+        val dash = span / 3
+        canvas.drawRect(x, bottom - t, x + dash, bottom, p)
+        canvas.drawRect(x + dash * 2, bottom - t, x + span, bottom, p)
+      }
+      else -> canvas.drawRect(x, bottom - t, x + span, bottom, p)
     }
   }
 
@@ -1228,6 +1311,16 @@ internal class GhosttyTerminalView(context: Context) : View(context) {
     return handleKeyEvent(event) || super.onKeyUp(keyCode, event)
   }
 
+  /**
+   * A hardware keyboard's key that arrived while focus was elsewhere: the
+   * terminal takes focus and the key. False for keys it leaves alone.
+   */
+  fun takeHardwareKey(event: KeyEvent): Boolean {
+    if (event.isSystem) return false
+    if (!hasFocus()) requestFocus()
+    return handleKeyEvent(event)
+  }
+
   private fun handleKeyEvent(event: KeyEvent): Boolean {
     if (handle == 0L || finished) return false
     val action = when (event.action) {
@@ -1319,9 +1412,15 @@ internal class GhosttyTerminalView(context: Context) : View(context) {
     const val JUMP_CHIP_BACKGROUND = 0xCC2A2A2E.toInt()
     const val JUMP_CHIP_ARROW_COLOR = 0xFFE0E0E0.toInt()
 
-    const val HEADER_BYTES = 52
+    const val HEADER_BYTES = 56
     const val ROW_HEADER_BYTES = 16
-    const val CELL_RECORD_BYTES = 16
+    const val CELL_RECORD_BYTES = 20
+    const val UNDERLINE_SINGLE = 1
+    const val UNDERLINE_DOUBLE = 2
+    const val UNDERLINE_CURLY = 3
+    const val UNDERLINE_DOTTED = 4
+    const val UNDERLINE_DASHED = 5
+    const val HOLD_POLL_MS = 100L
     const val MAX_CELL_TEXT_UNITS = 32
 
     const val DIRTY_FULL = 2

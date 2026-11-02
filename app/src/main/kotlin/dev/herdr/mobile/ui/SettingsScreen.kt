@@ -477,6 +477,9 @@ private fun TerminalSection(vm: SettingsViewModel) {
     SwitchItem("Only while typing", prefs.keyBarTyping, "Shows the key bar only while the keyboard is up", enabled = prefs.keyBar) {
         vm.setPrefs { it.copy(keyBarTyping = !it.keyBarTyping) }
     }
+    SwitchItem("Programs can copy", prefs.clipboardWrite, "Lets vim, tmux and agents put text on this phone's clipboard") {
+        vm.setPrefs { it.copy(clipboardWrite = !it.clipboardWrite) }
+    }
 }
 
 @Composable

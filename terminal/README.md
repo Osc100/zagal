@@ -39,6 +39,9 @@ class TerminalView(context: Context) : LinearLayout {
     fun setTheme(theme: TerminalTheme?)
     fun setKeyColors(colors: KeyColors?)
     fun setKeyBar(mode: KeyBarMode)                 // ALWAYS (default), TYPING, OFF
+    fun setClipboardWrite(allowed: Boolean)         // programs copying (OSC 52); default on
+    fun takeHardwareKey(event: KeyEvent): Boolean   // a keyboard key while focus is elsewhere
+    val cellPixels: Pair<Int, Int>                  // cell size in px, for display facts
 }
 data class TerminalTheme(background, foreground, cursorColor,
     selectionBackground, selectionForeground, palette: List<String?>?)

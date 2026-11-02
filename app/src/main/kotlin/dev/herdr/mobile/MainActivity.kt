@@ -12,6 +12,8 @@ import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
 import androidx.activity.compose.LocalActivity
 import androidx.activity.compose.setContent
+import android.view.InputDevice
+import android.view.KeyEvent
 import androidx.activity.enableEdgeToEdge
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
@@ -97,6 +99,19 @@ private val TABS = listOf(
 
 // A FragmentActivity (still a ComponentActivity) for BiometricPrompt.
 class MainActivity : FragmentActivity() {
+    /** The terminals, while the app shows them: a hardware keyboard types into the one on screen. */
+    var terminals: TerminalHost? = null
+
+    override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        // Wherever focus is (a tab, the sidebar), a hardware keyboard types into
+        // the terminal on screen. A focused text field keeps its keys, and the
+        // soft keyboard's already reach the view it types into.
+        val hardware = event.device?.isVirtual == false &&
+            event.source and InputDevice.SOURCE_KEYBOARD == InputDevice.SOURCE_KEYBOARD
+        if (hardware && currentFocus?.onCheckIsTextEditor() != true && terminals?.takeHardwareKey(event) == true) return true
+        return super.dispatchKeyEvent(event)
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContent {
@@ -196,7 +211,14 @@ private fun App(main: MainViewModel) {
     // Terminal tab keeps its grid and its stream.
     val scope = rememberCoroutineScope()
     val host = remember { TerminalHost(context, scope, main::client) }
-    DisposableEffect(host) { onDispose { host.release() } }
+    DisposableEffect(host) {
+        val activity = context as? MainActivity
+        activity?.terminals = host
+        onDispose {
+            if (activity?.terminals === host) activity.terminals = null
+            host.release()
+        }
+    }
 
     // A tablet (Material's expanded width): one screen with a sidebar instead of tabs.
     if (LocalConfiguration.current.screenWidthDp >= 840) return WideApp(main, host, prefs)

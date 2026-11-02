@@ -12,6 +12,7 @@ import android.content.Context
 import android.content.Intent
 import android.graphics.Typeface
 import android.net.Uri
+import android.view.KeyEvent
 import android.view.ViewGroup
 import androidx.core.content.res.ResourcesCompat
 import dev.herdr.mobile.R
@@ -27,6 +28,7 @@ import dev.herdr.terminal.TerminalView
 import herdr.core.AttachOptions
 import herdr.core.Attached
 import herdr.core.Client
+import herdr.core.Display
 import herdr.core.End
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -67,6 +69,10 @@ class TerminalHost(
     private var job: Job? = null
     private var stream: Attached? = null
 
+    // This viewer's colors and cell size, for the core: it answers programs that
+    // ask whether the terminal is dark or light (CSI ? 996 n) from them.
+    private var display: Display? = null
+
     /**
      * The view for `address` (host-qualified): the one already showing it, or
      * a fresh one (ghostty's grid belongs to one stream).
@@ -100,7 +106,7 @@ class TerminalHost(
                 }
                 _state.value = PaneState.Attaching
                 val a = try {
-                    c.attach(localOf(address), AttachOptions(s.first, s.second, history = 2000, resumed = seen))
+                    c.attach(localOf(address), AttachOptions(s.first, s.second, history = 2000, resumed = seen, display = display))
                 } catch (e: CancellationException) {
                     throw e
                 } catch (e: Exception) {
@@ -175,6 +181,18 @@ class TerminalHost(
                 palette = colors.ansi.map { it.hex() },
             ),
         )
+        v.setClipboardWrite(prefs.clipboardWrite)
+        val (cellWidth, cellHeight) = v.cellPixels
+        val next = Display(
+            bg = colors.background.hex(),
+            fg = colors.terminalForeground.hex(),
+            cursor = colors.cursor.hex(),
+            cell = listOf(cellWidth, cellHeight),
+        )
+        if (next != display) {
+            display = next
+            stream?.facts(next)
+        }
         v.setKeyColors(
             KeyColors(
                 background = colors.chrome.hex(),
@@ -209,6 +227,9 @@ class TerminalHost(
             else -> null
         }
     }
+
+    /** A hardware keyboard's key for the terminal on screen, if one is; false if it isn't taken. */
+    fun takeHardwareKey(event: KeyEvent): Boolean = view?.takeIf { it.isShown }?.takeHardwareKey(event) ?: false
 
     /** Detaches and frees the terminal (none to show, or the activity is gone). */
     fun release() {

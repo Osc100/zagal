@@ -63,6 +63,8 @@ data class Prefs(
     val keyBar: Boolean = true,
     /** The key bar only while the keyboard is up; otherwise it's always there. */
     val keyBarTyping: Boolean = false,
+    /** Programs may copy to the phone's clipboard (OSC 52), as on the desktop. */
+    val clipboardWrite: Boolean = true,
 )
 
 data class FontChoice(val family: String?, val label: String, val ligatures: Boolean)
