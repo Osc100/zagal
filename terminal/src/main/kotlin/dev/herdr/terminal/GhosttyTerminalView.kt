@@ -4,11 +4,11 @@ import android.app.AlertDialog
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
-import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.Rect
+import android.graphics.RenderNode
 import android.graphics.Typeface
 import android.os.SystemClock
 import android.provider.Settings
@@ -45,8 +45,9 @@ import kotlin.math.roundToInt
  * Owns a libghostty-vt session via [GhosttyVt]. PTY output is fed in with
  * [write]; user input (IME text, key escape sequences, VT query responses)
  * comes back through [onInputBytes]. Rendering pulls flattened dirty-row
- * snapshots from JNI once per Choreographer frame and patches them onto a
- * grid-sized bitmap; [onDraw] blits the bitmap and overlays the cursor.
+ * snapshots from JNI once per Choreographer frame and records each dirty row
+ * into its own RenderNode; [onDraw] replays the rows (drawn by the GPU, clean
+ * ones without re-recording) and overlays the cursor.
  */
 internal class GhosttyTerminalView(context: Context) : View(context) {
   var onInputBytes: ((ByteArray) -> Unit)? = null
@@ -89,8 +90,13 @@ internal class GhosttyTerminalView(context: Context) : View(context) {
   // ── Grid state ──
   private var cols = INITIAL_COLS
   private var rows = INITIAL_ROWS
-  private var bitmap: Bitmap? = null
-  private var bitmapCanvas: Canvas? = null
+  // One display list per grid row, re-recorded only when the row changes; null
+  // until the row is first drawn. Each spans the whole grid and clips to it, so a
+  // glyph spilling past its row or the grid's edge draws as it did onto the
+  // grid-sized bitmap these replaced.
+  private var rowNodes = arrayOfNulls<RenderNode>(0)
+  private var gridWidthPx = 0
+  private var gridHeightPx = 0
   private var snapshotBuf: ByteBuffer? = null
   private var rowChars = CharArray(0)
   private var cellFg = IntArray(0)
@@ -128,8 +134,8 @@ internal class GhosttyTerminalView(context: Context) : View(context) {
   private var cursorVisible = false
   private var cursorBlinks = false
 
-  // The cursor is an onDraw overlay, so blinking only re-blits the cached
-  // bitmap; the grid is untouched.
+  // The cursor is an onDraw overlay, so blinking only replays the recorded
+  // rows; the grid is untouched.
   private var blinkPhaseOn = true
   private var blinkScheduled = false
   private val blinkRunnable = object : Runnable {
@@ -413,6 +419,7 @@ internal class GhosttyTerminalView(context: Context) : View(context) {
     scroller.abortAnimation()
     removeCallbacks(flingRunnable)
     actionMode?.finish()
+    for (node in rowNodes) node?.discardDisplayList()
     if (handle != 0L) {
       GhosttyVt.free(handle)
       handle = 0
@@ -543,7 +550,7 @@ internal class GhosttyTerminalView(context: Context) : View(context) {
     val changed = newCols != cols || newRows != rows
     cols = newCols
     rows = newRows
-    if (changed || force || bitmap == null) {
+    if (changed || force || rowNodes.size != rows) {
       GhosttyVt.resize(handle, cols, rows, cellWidth.roundToInt(), cellHeight)
       allocateGridBuffers()
       onGridResize?.invoke(cols, rows)
@@ -552,12 +559,10 @@ internal class GhosttyTerminalView(context: Context) : View(context) {
   }
 
   private fun allocateGridBuffers() {
-    val widthPx = max(1, ceil(cols * cellWidth).toInt())
-    val heightPx = max(1, rows * cellHeight)
-    bitmap = Bitmap.createBitmap(widthPx, heightPx, Bitmap.Config.ARGB_8888).also {
-      bitmapCanvas = Canvas(it)
-      bitmapCanvas?.drawColor(defaultBg)
-    }
+    gridWidthPx = max(1, ceil(cols * cellWidth).toInt())
+    gridHeightPx = max(1, rows * cellHeight)
+    for (node in rowNodes) node?.discardDisplayList()
+    rowNodes = arrayOfNulls(rows)
     val capacity = HEADER_BYTES +
       rows * (ROW_HEADER_BYTES + cols * CELL_RECORD_BYTES + cols * MAX_CELL_TEXT_UNITS * 2 + 4)
     snapshotBuf = ByteBuffer.allocateDirect(capacity).order(ByteOrder.LITTLE_ENDIAN)
@@ -582,7 +587,6 @@ internal class GhosttyTerminalView(context: Context) : View(context) {
 
   private fun renderFrame() {
     val buf = snapshotBuf ?: return
-    val canvas = bitmapCanvas ?: return
     if (handle == 0L) return
 
     val rowCount = GhosttyVt.snapshot(handle, buf)
@@ -609,8 +613,9 @@ internal class GhosttyTerminalView(context: Context) : View(context) {
     cursorColor = buf.int
     syncBlinkTimer()
 
-    if (dirtyKind == DIRTY_FULL) canvas.drawColor(defaultBg)
-    repeat(rowCount) { drawRowRecord(buf, canvas, snapCols) }
+    // Everything changed: rows the snapshot leaves out show the background.
+    if (dirtyKind == DIRTY_FULL) for (node in rowNodes) node?.discardDisplayList()
+    repeat(rowCount) { recordRow(buf, snapCols) }
     syncSelectionUi()
     invalidate()
   }
@@ -880,7 +885,29 @@ internal class GhosttyTerminalView(context: Context) : View(context) {
     syncBlinkTimer()
   }
 
-  private fun drawRowRecord(buf: ByteBuffer, canvas: Canvas, snapCols: Int) {
+  /** Records one snapshot row record into its row's RenderNode. */
+  private fun recordRow(buf: ByteBuffer, snapCols: Int) {
+    val rowIndex = buf.peekInt()
+    if (rowIndex !in rowNodes.indices) {
+      drawRowRecord(buf, null, snapCols)
+      return
+    }
+    val node = rowNodes[rowIndex] ?: RenderNode("terminal row").also {
+      it.setPosition(0, 0, gridWidthPx, gridHeightPx)
+      rowNodes[rowIndex] = it
+    }
+    val canvas = node.beginRecording(gridWidthPx, gridHeightPx)
+    try {
+      drawRowRecord(buf, canvas, snapCols)
+    } finally {
+      node.endRecording()
+    }
+  }
+
+  private fun ByteBuffer.peekInt() = getInt(position())
+
+  /** Reads one row record; draws it on [canvas] unless null (a row outside the grid). */
+  private fun drawRowRecord(buf: ByteBuffer, canvas: Canvas?, snapCols: Int) {
     val rowIndex = buf.int
     val selStart = buf.int
     val selEnd = buf.int
@@ -932,6 +959,7 @@ internal class GhosttyTerminalView(context: Context) : View(context) {
       cellFlags[col] = flags
     }
     buf.position(nextRecord)
+    if (canvas == null) return
 
     val top = (rowIndex * cellHeight).toFloat()
     val bottom = top + cellHeight
@@ -1009,7 +1037,11 @@ internal class GhosttyTerminalView(context: Context) : View(context) {
 
   override fun onDraw(canvas: Canvas) {
     canvas.drawColor(defaultBg)
-    bitmap?.let { canvas.drawBitmap(it, 0f, 0f, null) }
+    // Rows replay only on a hardware canvas: a software one (a View.draw into
+    // a bitmap) gets the background and overlays.
+    if (canvas.isHardwareAccelerated) {
+      for (node in rowNodes) if (node != null && node.hasDisplayList()) canvas.drawRenderNode(node)
+    }
     drawCursor(canvas)
     drawSelectionHandles(canvas)
     drawScrollIndicator(canvas)
