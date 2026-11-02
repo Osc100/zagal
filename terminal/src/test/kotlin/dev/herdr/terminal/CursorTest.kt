@@ -30,4 +30,16 @@ class CursorTest {
     val y = grid.painter.cellHeight / 2
     assertTrue((edge - 2..edge + 1).any { distance(grid.bitmap.getPixel(it, y), Grid.BG) > 30 }, "the right edge")
   }
+
+  @Test
+  fun aBlockIsSolidWithItsCharacterOverItInTheBackground() {
+    // A cursor the text's own color, as the default theme's: the character
+    // must still show.
+    val grid = Grid()
+    grid.draw(0, cells("W"))
+    grid.painter.drawCursor(grid.canvas, 0, 0, GridPainter.CURSOR_STYLE_BLOCK, Grid.FG, glyph = charArrayOf('W'), glyphLength = 1)
+    val pixels = grid.cellPixels(0, 0)
+    assertTrue(share(pixels, Grid.FG, tolerance = 8) > 0.4, "solid")
+    assertTrue(share(pixels, Grid.BG, tolerance = 40) > 0.05, "the W, in the background color")
+  }
 }

@@ -8,8 +8,8 @@
 //! per-cell JNI calls. See GhosttyTerminalView.kt for the reader side.
 //!
 //! Buffer layout:
-//!   header: 15 x i32
-//!     [0] version (4)          [1] dirty kind (0 none / 1 partial / 2 full)
+//!   header: 19 x i32
+//!     [0] version (5)          [1] dirty kind (0 none / 1 partial / 2 full)
 //!     [2] cols                 [3] rows
 //!     [4] default bg (ARGB)    [5] default fg (ARGB)
 //!     [6] cursor x or -1 (a wide character's first cell when on either)
@@ -20,6 +20,9 @@
 //!     [13] held (0/1): synchronized output; the rows are the frame captured
 //!          when it began, and the caller should look again shortly
 //!     [14] cursor wide (0/1): on a wide character, two cells wide
+//!     [15] the cursor's cell's flags (as a cell's, below)
+//!     [16] its text's length in UTF-16 units (0-4, the first of a longer one)
+//!     [17..18] its text: 4 x u16 — a block cursor draws it over itself
 //!   row record:
 //!     i32 rowIndex, i32 selStartX or -1, i32 selEndX or -1, i32 textUnits
 //!     cells[cols] x 20 bytes:
@@ -47,7 +50,7 @@ const flag_spacer: u16 = 1 << 8;
 const flag_fg_default: u16 = 1 << 9;
 const flag_bg_none: u16 = 1 << 10;
 
-pub const header_bytes = 15 * 4;
+pub const header_bytes = 19 * 4;
 const row_header_bytes = 4 * 4;
 const cell_record_bytes = 20;
 // How long a synchronized-output hold may last before drawing resumes anyway.
@@ -223,6 +226,19 @@ pub fn nowMs() i64 {
     return @as(i64, ts.sec) * 1000 + @divTrunc(@as(i64, ts.nsec), 1_000_000);
 }
 
+/// A style's flags, as a cell record carries them.
+fn styleFlags(style: vt.Style) u16 {
+    var flags: u16 = 0;
+    if (style.flags.bold) flags |= flag_bold;
+    if (style.flags.italic) flags |= flag_italic;
+    if (style.flags.faint) flags |= flag_faint;
+    if (style.flags.underline != .none) flags |= flag_underline;
+    if (style.flags.strikethrough) flags |= flag_strikethrough;
+    if (style.flags.inverse) flags |= flag_inverse;
+    if (style.flags.invisible) flags |= flag_invisible;
+    return flags;
+}
+
 /// Writes the snapshot (see the layout above) into `buf`; returns the row records written.
 pub fn fillSnapshot(session: *Session, buf: []u8) !i32 {
     const state = &session.render;
@@ -260,8 +276,26 @@ pub fn fillSnapshot(session: *Session, buf: []u8) !i32 {
     };
     const cursor_x: i32 = if (cursor.viewport) |vp| @as(i32, vp.x) - @intFromBool(vp.wide_tail) else -1;
 
+    // The cell under the cursor, as it's drawn: what a block cursor draws again over itself.
+    var glyph: [4]u16 = @splat(0);
+    var glyph_units: usize = 0;
+    var glyph_flags: u16 = 0;
+    if (cursor.viewport) |vp| glyph: {
+        const range = state.rowDataRange();
+        const y = range.start + vp.y;
+        if (y >= range.end) break :glyph;
+        const data = state.row_data.items(.cells)[y].slice();
+        const x: usize = @intCast(cursor_x);
+        if (x >= data.len) break :glyph;
+        const cell = data.items(.raw)[x];
+        const style: vt.Style = if (cell.hasStyling()) data.items(.style)[x] else .{};
+        glyph_flags = styleFlags(style);
+        if (!cell.hasText() or style.flags.invisible) break :glyph;
+        glyph_units = appendUtf16(cell.codepoint(), &glyph, 0);
+    }
+
     const header = [_]i32{
-        4,
+        5,
         @backingInt(dirty),
         @intCast(cols),
         @intCast(state.rows),
@@ -276,6 +310,10 @@ pub fn fillSnapshot(session: *Session, buf: []u8) !i32 {
         cursor_color,
         @intFromBool(held),
         @intFromBool(cursor.viewport != null and wide),
+        glyph_flags,
+        @intCast(glyph_units),
+        @bitCast(@as(u32, glyph[0]) | @as(u32, glyph[1]) << 16),
+        @bitCast(@as(u32, glyph[2]) | @as(u32, glyph[3]) << 16),
     };
     comptime std.debug.assert(header.len * 4 == header_bytes);
     for (header, 0..) |v, i| putI32(buf, i * 4, v);
@@ -329,13 +367,7 @@ pub fn fillSnapshot(session: *Session, buf: []u8) !i32 {
 
             // Style data is undefined for default-styled cells.
             const style: vt.Style = if (cell.hasStyling()) styles[col] else .{};
-            if (style.flags.bold) flags |= flag_bold;
-            if (style.flags.italic) flags |= flag_italic;
-            if (style.flags.faint) flags |= flag_faint;
-            if (style.flags.underline != .none) flags |= flag_underline;
-            if (style.flags.strikethrough) flags |= flag_strikethrough;
-            if (style.flags.inverse) flags |= flag_inverse;
-            if (style.flags.invisible) flags |= flag_invisible;
+            flags |= styleFlags(style);
 
             const fg: ?vt.color.RGB = switch (style.fg_color) {
                 .none => null,
@@ -508,4 +540,26 @@ test "the cursor on a wide character covers it, from its first cell" {
         try std.testing.expectEqual(case.x, headerOf(&buf).cursor_x);
         try std.testing.expectEqual(case.wide, headerOf(&buf).cursor_wide);
     }
+}
+
+test "the snapshot carries the cell under the cursor" {
+    const session = try create(10, 3, 100);
+    defer destroy(session);
+    var buf: testBuffer(10, 3) align(4) = undefined;
+    session.stream.nextSlice("\x1b[1mW\x1b[0m中\x1b[1;1H");
+    _ = try fillSnapshot(session, &buf);
+    const at = struct {
+        fn f(b: []const u8, i: usize) i32 {
+            return std.mem.readInt(i32, b[i * 4 ..][0..4], .little);
+        }
+    }.f;
+    try std.testing.expectEqual(flag_bold, at(&buf, 15));
+    try std.testing.expectEqual(1, at(&buf, 16));
+    try std.testing.expectEqual('W', at(&buf, 17) & 0xFFFF);
+
+    // On 中's right half: 中.
+    session.stream.nextSlice("\x1b[1;3H");
+    _ = try fillSnapshot(session, &buf);
+    try std.testing.expectEqual(1, at(&buf, 16));
+    try std.testing.expectEqual('中', at(&buf, 17) & 0xFFFF);
 }

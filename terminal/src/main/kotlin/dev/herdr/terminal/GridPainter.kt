@@ -273,16 +273,7 @@ internal class GridPainter(private val context: Context) {
         continue
       }
       val codepoint = Character.codePointAt(rowChars, cellTextOff[col])
-      val paint = when {
-        symbolsPaint != null &&
-          (codepoint in PUA_BMP_FIRST..PUA_BMP_LAST || codepoint >= PUA_SUPPLEMENTARY_FIRST) ->
-          symbolsPaint
-        fallbackPaint != null && codepoint >= 0x80 && !canDraw(codepoint) -> fallbackPaint
-        flags and FLAG_BOLD != 0 && flags and FLAG_ITALIC != 0 -> boldItalicPaint
-        flags and FLAG_BOLD != 0 -> boldPaint
-        flags and FLAG_ITALIC != 0 -> italicPaint
-        else -> textPaint
-      }
+      val paint = paintFor(codepoint, flags)
       // Ligatures: extend over following ASCII cells with the same look.
       var end = col + 1
       if (ligatures && joinable(col)) {
@@ -316,6 +307,18 @@ internal class GridPainter(private val context: Context) {
       paint.alpha = 255
       col = end
     }
+  }
+
+  /** The paint a cell's character is drawn with: its font, by the character and the cell's style. */
+  private fun paintFor(codepoint: Int, flags: Int): Paint = when {
+    symbolsPaint != null &&
+      (codepoint in PUA_BMP_FIRST..PUA_BMP_LAST || codepoint >= PUA_SUPPLEMENTARY_FIRST) ->
+      symbolsPaint
+    fallbackPaint != null && codepoint >= 0x80 && !canDraw(codepoint) -> fallbackPaint
+    flags and FLAG_BOLD != 0 && flags and FLAG_ITALIC != 0 -> boldItalicPaint
+    flags and FLAG_BOLD != 0 -> boldPaint
+    flags and FLAG_ITALIC != 0 -> italicPaint
+    else -> textPaint
   }
 
   /**
@@ -422,9 +425,22 @@ internal class GridPainter(private val context: Context) {
 
   /**
    * The cursor at cell ([x], [y]) in [style], in [color] (0: the default
-   * foreground); [wide] on a wide character, over both its cells.
+   * foreground); [wide] on a wide character, over both its cells. A block is
+   * solid, the cell's character ([glyph], [glyphLength] units, its cell's
+   * [glyphFlags]) drawn again over it in the background color, as ghostty
+   * draws it.
    */
-  fun drawCursor(canvas: Canvas, x: Int, y: Int, style: Int, color: Int, wide: Boolean = false) {
+  fun drawCursor(
+    canvas: Canvas,
+    x: Int,
+    y: Int,
+    style: Int,
+    color: Int,
+    wide: Boolean = false,
+    glyph: CharArray? = null,
+    glyphLength: Int = 0,
+    glyphFlags: Int = 0,
+  ) {
     val left = x * cellWidth
     val span = if (wide) cellWidth * 2 else cellWidth
     val top = (y * cellHeight).toFloat()
@@ -446,9 +462,14 @@ internal class GridPainter(private val context: Context) {
       }
       else -> {
         cursorPaint.style = Paint.Style.FILL
-        cursorPaint.alpha = 170
         canvas.drawRect(left, top, left + span, bottom, cursorPaint)
-        cursorPaint.alpha = 255
+        if (glyph == null || glyphLength == 0) return
+        val codepoint = Character.codePointAt(glyph, 0)
+        val paint = paintFor(codepoint, glyphFlags)
+        paint.color = defaultBg
+        if (!drawBlock(canvas, codepoint, x, top, bottom, paint)) {
+          canvas.drawText(glyph, 0, glyphLength, left, top + baseline, paint)
+        }
       }
     }
   }
@@ -472,7 +493,7 @@ internal class GridPainter(private val context: Context) {
     const val PUA_SUPPLEMENTARY_FIRST = 0xF0000
 
     // The snapshot's layout (jni.zig).
-    const val HEADER_BYTES = 60
+    const val HEADER_BYTES = 76
     const val ROW_HEADER_BYTES = 16
     const val CELL_RECORD_BYTES = 20
     const val MAX_CELL_TEXT_UNITS = 32

@@ -116,6 +116,10 @@ internal class GhosttyTerminalView(context: Context) : View(context) {
   private var cursorBlinks = false
   // On a wide character: two cells wide.
   private var cursorWide = false
+  // The character under it, which a block draws again over itself.
+  private val cursorGlyph = CharArray(4)
+  private var cursorGlyphLength = 0
+  private var cursorGlyphFlags = 0
 
   // The cursor is an onDraw overlay, so blinking only replays the recorded
   // rows; the grid is untouched.
@@ -576,6 +580,9 @@ internal class GhosttyTerminalView(context: Context) : View(context) {
     // update, or on its own after a second.
     if (buf.int != 0) postDelayed(::scheduleFrame, HOLD_POLL_MS)
     cursorWide = buf.int != 0
+    cursorGlyphFlags = buf.int
+    cursorGlyphLength = buf.int
+    for (i in 0 until 4) cursorGlyph[i] = buf.short.toInt().toChar()
     syncBlinkTimer()
 
     // Everything changed: rows the snapshot leaves out show the background.
@@ -979,7 +986,9 @@ internal class GhosttyTerminalView(context: Context) : View(context) {
   private fun drawCursor(canvas: Canvas) {
     if (!cursorVisible || cursorX < 0 || cursorY < 0) return
     if (cursorBlinks && blinkScheduled && !blinkPhaseOn) return
-    painter.drawCursor(canvas, cursorX, cursorY, cursorStyle, cursorColor, cursorWide)
+    painter.drawCursor(
+      canvas, cursorX, cursorY, cursorStyle, cursorColor, cursorWide, cursorGlyph, cursorGlyphLength, cursorGlyphFlags,
+    )
   }
 
   // ── Mouse ──
