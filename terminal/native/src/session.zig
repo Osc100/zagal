@@ -151,16 +151,23 @@ pub const Session = struct {
         return .{};
     }
 
-    // Selection changes don't reliably mark rows dirty for our snapshot; force a
-    // full re-emit so the per-row selection ranges refresh everywhere.
+    /// Every row again in the next snapshot: the view lost its drawings (a
+    /// resize, a theme, a view shown again).
     pub fn dirtyAll(self: *Session) void {
         self.render.dirty = .full;
         self.shown_rows.clearRetainingCapacity();
     }
 
+    /// The selection changed. It doesn't reliably mark rows dirty, so every
+    /// row is looked at again; those whose selection is as it was (most, as
+    /// a handle is dragged) aren't sent.
+    pub fn reselect(self: *Session) void {
+        self.render.dirty = .full;
+    }
+
     pub fn select(self: *Session, sel: vt.Selection) bool {
         self.term.screens.active.select(sel) catch return false;
-        self.dirtyAll();
+        self.reselect();
         return true;
     }
 
@@ -816,4 +823,21 @@ test "after the view lost its drawings, every row again" {
     _ = try fillSnapshot(session, &buf);
     session.dirtyAll();
     try std.testing.expectEqual(3, try fillSnapshot(session, &buf));
+}
+
+test "a selection's end moving sends only the rows it changed" {
+    const session = try create(10, 5, 100);
+    defer destroy(session);
+    var buf: testBuffer(10, 5) align(4) = undefined;
+    session.stream.nextSlice("a\r\nb\r\nc\r\nd\r\ne\x1b[1;1H");
+    _ = try fillSnapshot(session, &buf);
+    // Rows 1 to 3 selected, then the end dragged on to row 4.
+    _ = session.select(.init(session.viewportPin(0, 1).?, session.viewportPin(5, 3).?, false));
+    try std.testing.expectEqual(3, try fillSnapshot(session, &buf));
+    _ = session.select(.init(session.viewportPin(0, 1).?, session.viewportPin(5, 4).?, false));
+    // Row 3 (now selected to its end) and row 4.
+    try std.testing.expectEqual(2, try fillSnapshot(session, &buf));
+    session.reselect();
+    session.term.screens.active.clearSelection();
+    try std.testing.expectEqual(4, try fillSnapshot(session, &buf));
 }

@@ -320,7 +320,7 @@ fn setSelection(
 fn clearSelection(_: Env, _: c.jobject, handle: c.jlong) callconv(.c) void {
     const session = fromHandle(handle) orelse return;
     session.term.screens.active.clearSelection();
-    session.dirtyAll();
+    session.reselect();
 }
 
 // The selection as UTF-8 (plain, unwrapped, trimmed: ghostty's copy
