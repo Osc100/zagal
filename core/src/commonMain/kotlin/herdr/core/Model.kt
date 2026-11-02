@@ -114,6 +114,8 @@ data class Terminal(
     /** The desktop's `where` label, `<space> / <tab>`. */
     val where: String?,
     val parent: String?,
+    /** Pinned to the top of the agent lists, on every screen (`herdr.pinned`). */
+    val pinned: Boolean,
     val record: TerminalRecord,
 )
 
@@ -129,6 +131,8 @@ data class Space(
     /** Qualified like addresses (`beta/sp...`). */
     val id: String,
     val name: String,
+    /** The name someone gave it; "" when it's named after its folder. */
+    val given: String,
     val machine: String?,
     val folder: String,
     val tabs: List<Tab>,
@@ -368,6 +372,7 @@ class Session(private val scope: CoroutineScope, private val clock: () -> Long =
                 tab = at?.tab,
                 where = r.labels["where"],
                 parent = r.parent?.takeIf { it.isNotEmpty() }?.let { qualify(it, machineOf(r.address)) },
+                pinned = !r.labels["herdr.pinned"].isNullOrEmpty(),
                 record = r,
             )
         }
@@ -382,7 +387,7 @@ class Session(private val scope: CoroutineScope, private val clock: () -> Long =
                     terminals = tab.terminals.filter { it in byAddress },
                 )
             }
-            val s = Space(d.id, d.name, d.machine, d.folder, tabs, rollup(tabs.map { it.attention }))
+            val s = Space(d.id, d.name, d.name, d.machine, d.folder, tabs, rollup(tabs.map { it.attention }))
             if (s.name.isEmpty()) s.copy(name = spaceName(s, terminals)) else s
         }
 

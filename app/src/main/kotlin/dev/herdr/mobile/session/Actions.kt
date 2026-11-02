@@ -4,12 +4,20 @@
 
 package dev.herdr.mobile.session
 
+import herdr.core.addWorktree
+import herdr.core.Checkout
 import herdr.core.Choice
 import herdr.core.Client
-import herdr.core.Created
 import herdr.core.confirmClose
+import herdr.core.Created
+import herdr.core.homeOf
+import herdr.core.place
+import herdr.core.RemoveRisk
+import herdr.core.Repo
 import herdr.core.spaceFolder
+import herdr.core.spaceOf
 import herdr.core.tabFolder
+import kotlinx.coroutines.CancellationException
 
 /** What closing asks before it happens. */
 data class Prompt(val title: String, val detail: String, val confirm: String)
@@ -67,5 +75,68 @@ class Actions(private val live: Live) {
     suspend fun closeSpace(machine: String?, space: String) {
         val host = hostOf(space)
         herdr.core.closeSpace(client(host), machine, localOf(space), liveRecords(host))
+    }
+
+    /** "": named after its folder again. */
+    suspend fun renameSpace(machine: String?, space: String, name: String) =
+        herdr.core.renameSpace(client(hostOf(space)), machine, localOf(space), name)
+
+    /** "": its position again. */
+    suspend fun renameTab(machine: String?, tab: String, name: String) =
+        herdr.core.renameTab(client(hostOf(tab)), machine, localOf(tab), name)
+
+    /** To `index` among its machine's spaces. */
+    suspend fun moveSpace(machine: String?, space: String, index: Int) =
+        herdr.core.moveSpace(client(hostOf(space)), machine, localOf(space), index)
+
+    suspend fun pin(terminal: String, pinned: Boolean) =
+        herdr.core.pin(client(hostOf(terminal)), localOf(terminal), pinned)
+
+    // Worktrees (herdr-app mods/worktree), for a space's checkout.
+
+    private fun snapshot(host: String) = live.core(host)?.snapshot?.value
+
+    /** The checkout a space is in, if it's git: null too when the machine can't tell (as the desktop's menu). */
+    suspend fun repoOf(space: String): Repo? {
+        val host = hostOf(space)
+        val s = snapshot(host) ?: return null
+        val sp = s.spaces.find { it.id == localOf(space) } ?: return null
+        val folder = place(sp, s.terminals) ?: return null
+        return try {
+            herdr.core.repoOf(client(host), sp.machine, folder)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    suspend fun home(host: String, machine: String?): String = homeOf(client(host), machine)
+
+    suspend fun checkouts(host: String, machine: String?, repo: Repo): List<Checkout> =
+        herdr.core.checkouts(client(host), machine, repo)
+
+    /** A new branch's checkout, in a new space there (left unnamed, so it follows its folder). */
+    suspend fun newWorktree(host: String, machine: String?, repo: Repo, branch: String): Created {
+        val c = client(host)
+        val path = addWorktree(c, machine, repo, branch)
+        return herdr.core.newSpace(c, machine, folder = path).on(host)
+    }
+
+    /** The space showing a checkout, else a new one there: what to open. */
+    suspend fun openCheckout(host: String, machine: String?, checkout: Checkout, all: List<Checkout>): String? {
+        val s = snapshot(host)
+        val there = s?.let { spaceOf(checkout.path, all, machine, it.spaces, it.terminals) }
+        if (there != null) return there.tabs.firstOrNull()?.terminals?.firstOrNull()?.let { ref(host, it) }
+        return herdr.core.newSpace(client(host), machine, folder = checkout.path).on(host).address
+    }
+
+    suspend fun removeRisk(host: String, machine: String?, repo: Repo): RemoveRisk =
+        herdr.core.removeRisk(client(host), machine, repo)
+
+    /** Closes the space first (a shell in the folder keeps it busy), then removes its checkout. */
+    suspend fun removeWorktree(machine: String?, space: String, repo: Repo, force: Boolean) {
+        closeSpace(machine, space)
+        herdr.core.removeWorktree(client(hostOf(space)), machine, repo, force)
     }
 }

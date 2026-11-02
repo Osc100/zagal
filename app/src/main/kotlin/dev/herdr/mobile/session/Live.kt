@@ -125,6 +125,8 @@ internal fun merge(snaps: List<Pair<Host, SessionSnapshot>>, idle: Boolean): Ses
                     // The desktop's own choice lives in its app state, not the core.
                     avatar = i,
                     tabs = sp.tabs.map { Tab(ref(h.id, it.id), it.name, it.terminals.map { t -> ref(h.id, t) }) },
+                    given = sp.given,
+                    folder = sp.folder,
                 )
             }
         },
@@ -142,6 +144,7 @@ internal fun merge(snaps: List<Pair<Host, SessionSnapshot>>, idle: Boolean): Ses
                     since = t.statusMs,
                     space = t.space?.let { ref(h.id, it) },
                     tab = t.tab?.let { ref(h.id, it) },
+                    pinned = t.pinned,
                 )
             }
         },

@@ -39,6 +39,7 @@ fun agent(
     tab = space?.let { "tb1" },
     where = null,
     parent = parent,
+    pinned = false,
     record = TerminalRecord(JsonObject(emptyMap())),
 )
 

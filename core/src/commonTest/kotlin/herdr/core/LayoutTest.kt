@@ -208,7 +208,7 @@ class LayoutTest {
     private fun shown(address: String, cwd: String, space: String?) = Terminal(
         address = address, machine = machineOf(address), name = null, agent = null, program = "fish",
         shown = programOf(null, listOf("fish")), title = "", detail = null, cwd = cwd, status = null,
-        attention = null, statusMs = null, space = space, tab = null, where = null, parent = null,
+        attention = null, statusMs = null, space = space, tab = null, where = null, parent = null, pinned = false,
         record = TerminalRecord(JsonObject(emptyMap())),
     )
 
@@ -401,5 +401,47 @@ class LayoutTest {
         val sets = herdr.sets.size
         assertEquals(Closed(null, false, emptyList()), closeSpace(client, "beta", space))
         assertEquals(sets, herdr.sets.size)
+    }
+
+    @Test
+    fun renamingASpaceOrATabWritesTheNameTrimmedEmptyIsAutomaticAgain() = runTest {
+        val (herdr, client) = setup()
+        renameSpace(client, null, expo, "  api  ")
+        assertEquals("api", doc(herdr).spaces().first { it.string("id") == expo }.string("name"))
+        renameTab(client, null, "tb7661ff13518383114ef8f0277e86ea04", "build")
+        assertEquals(
+            "build",
+            doc(herdr).spaces().flatMap { it.tabs() }.first { it.string("id") == "tb7661ff13518383114ef8f0277e86ea04" }.string("name"),
+        )
+        renameSpace(client, null, expo, "")
+        assertEquals("", doc(herdr).spaces().first { it.string("id") == expo }.string("name"), "named after its folder again")
+        val before = herdr.docs["beta"]
+        renameSpace(client, null, "sp-gone", "x")
+        assertEquals(before, herdr.docs["beta"], "a space that's gone: nothing written")
+    }
+
+    @Test
+    fun aSpaceMovesAmongItsMachinesSpacesClampedToTheEnds() = runTest {
+        val (herdr, client) = setup()
+        val ids = doc(herdr).spaces().map { it.string("id") }
+        moveSpace(client, null, expo, 0)
+        assertEquals(listOf(expo) + (ids - expo), doc(herdr).spaces().map { it.string("id") })
+        moveSpace(client, null, expo, 99)
+        assertEquals((ids - expo) + expo, doc(herdr).spaces().map { it.string("id") })
+        assertEquals(beta.value, herdr.docs["beta"]!!.value, "another machine's document is its own")
+    }
+
+    @Test
+    fun pinningLabelsTheTerminalUnpinningClearsTheLabel() = runTest {
+        val (herdr, client) = setup()
+        val labeled = mutableListOf<JsonObject>()
+        herdr.handlers["terminal.label"] = { p -> labeled += p; JsonObject(emptyMap()) }
+        pin(client, "beta/t7", pinned = true)
+        pin(client, "beta/t7", pinned = false)
+        assertEquals(
+            listOf("1", ""),
+            labeled.map { it["labels"]!!.jsonObject.string("herdr.pinned") },
+        )
+        assertEquals(listOf("beta/t7", "beta/t7"), labeled.map { it.string("terminal") })
     }
 }

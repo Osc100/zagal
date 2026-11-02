@@ -18,11 +18,13 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.PrimaryScrollableTabRow
 import androidx.compose.material3.Surface
+import androidx.compose.material3.TabRowDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
@@ -52,6 +54,7 @@ import dev.herdr.mobile.session.Connection
 import dev.herdr.mobile.session.Prefs
 import dev.herdr.mobile.session.Session
 import dev.herdr.mobile.session.Space
+import dev.herdr.mobile.session.Tab
 import dev.herdr.mobile.session.Terminal
 import dev.herdr.mobile.session.byPriority
 import dev.herdr.mobile.session.localOf
@@ -213,55 +216,76 @@ private fun Hosts(vm: TerminalViewModel) {
 @Composable
 private fun TabStrip(space: Space, session: Session, address: String, vm: TerminalViewModel) {
     var menu by rememberSaveable { mutableStateOf(false) }
+    // The tab whose menu is open, and the one being renamed.
+    var menuFor by remember { mutableStateOf<String?>(null) }
+    var renaming by remember { mutableStateOf<Tab?>(null) }
     val shown = space.tabs.indexOfFirst { address in it.terminals }
     fun close(tab: String) = vm.closeTab(space.machine, space.id, tab)
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        PrimaryScrollableTabRow(
-            selectedTabIndex = shown.coerceAtLeast(0),
-            modifier = Modifier.weight(1f),
-            edgePadding = 0.dp,
-        ) {
-            space.tabs.forEachIndexed { i, tab ->
-                val lead = session.terminals.find { it.address == tab.terminals.firstOrNull() }
-                val on = i == shown
-                // A tab of our own (Material's has no long press), with the same semantics.
-                Box(
-                    Modifier.heightIn(min = 40.dp).widthIn(max = 224.dp)
-                        .semantics { selected = on }
-                        .combinedClickable(
-                            role = Role.Tab,
-                            onLongClickLabel = "Close tab",
-                            onLongClick = { close(tab.id) },
-                        ) { tab.terminals.firstOrNull()?.let(vm::select) },
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Row(
-                        Modifier.padding(start = 16.dp, end = if (on) 0.dp else 16.dp),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalAlignment = Alignment.CenterVertically,
+    // + belongs to the bar: the tabs' background behind it, their rule under both.
+    Column(Modifier.background(TabRowDefaults.primaryContainerColor)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            PrimaryScrollableTabRow(
+                selectedTabIndex = shown.coerceAtLeast(0),
+                modifier = Modifier.weight(1f),
+                edgePadding = 0.dp,
+                divider = {},
+            ) {
+                space.tabs.forEachIndexed { i, tab ->
+                    val lead = session.terminals.find { it.address == tab.terminals.firstOrNull() }
+                    val on = i == shown
+                    // A tab of our own (Material's has no long press), with the same semantics;
+                    // a long press or a right click opens the desktop's tab menu.
+                    Box(
+                        Modifier.heightIn(min = 40.dp).widthIn(max = 224.dp)
+                            .semantics { selected = on }
+                            .combinedClickable(role = Role.Tab) { tab.terminals.firstOrNull()?.let(vm::select) }
+                            .rowMenu("Tab menu", onMenu = { menuFor = tab.id }),
+                        contentAlignment = Alignment.Center,
                     ) {
-                        // As the desktop's tabs: what runs there, its name unless the tab
-                        // was named, then a spinner while working or a dot when it wants you.
-                        lead?.let { ProgramIcon(it.program, 16.dp, MaterialTheme.colorScheme.onSurfaceVariant) }
-                        val auto = tab.name.isEmpty() || Regex("""tb\d+""").matches(tab.name)
-                        Text(
-                            if (auto) lead?.program?.name ?: "Terminal" else tab.name,
-                            Modifier.weight(1f, fill = false),
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
+                        RowMenu(
+                            menuFor == tab.id,
+                            { menuFor = null },
+                            listOf(
+                                MenuItem("Rename", { Lucide.SquarePen }) { renaming = tab },
+                                MenuItem("Close", { Lucide.X }, close = true) { close(tab.id) },
+                            ),
                         )
-                        when (val a = lead?.attention) {
-                            Attention.Working -> StatusMark(a)
-                            Attention.Blocked, Attention.Done ->
-                                Box(Modifier.size(6.dp).clip(CircleShape).background(tone(a)).semantics { contentDescription = SECTION.getValue(a) })
-                            else -> {}
+                        Row(
+                            Modifier.padding(start = 16.dp, end = if (on) 0.dp else 16.dp),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            // As the desktop's tabs: what runs there, its name unless the tab
+                            // was named, then a spinner while working or a dot when it wants you.
+                            lead?.let { ProgramIcon(it.program, 16.dp, MaterialTheme.colorScheme.onSurfaceVariant) }
+                            val auto = tab.name.isEmpty() || Regex("""tb\d+""").matches(tab.name)
+                            Text(
+                                if (auto) lead?.program?.name ?: "Terminal" else tab.name,
+                                Modifier.weight(1f, fill = false),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                            when (val a = lead?.attention) {
+                                Attention.Working -> StatusMark(a)
+                                Attention.Blocked, Attention.Done ->
+                                    Box(Modifier.size(6.dp).clip(CircleShape).background(tone(a)).semantics { contentDescription = SECTION.getValue(a) })
+                                else -> {}
+                            }
+                            if (on) IconButton({ close(tab.id) }, Modifier.size(32.dp)) { Icon(Lucide.X, "Close tab", Modifier.size(16.dp)) }
                         }
-                        if (on) IconButton({ close(tab.id) }, Modifier.size(32.dp)) { Icon(Lucide.X, "Close tab", Modifier.size(16.dp)) }
                     }
                 }
             }
+            IconButton({ menu = true }, Modifier.size(40.dp)) { Icon(Lucide.Plus, "New tab") }
         }
-        IconButton({ menu = true }, Modifier.size(40.dp)) { Icon(Lucide.Plus, "New tab") }
+        HorizontalDivider()
+    }
+    renaming?.let { tab ->
+        // An automatic name (empty, or the desktop's `tbN`) starts empty.
+        val given = tab.name.takeUnless { it.isEmpty() || Regex("""tb\d+""").matches(it) } ?: ""
+        RenameDialog("Rename tab", given, "Empty: its number", { renaming = null }) {
+            vm.renameTab(space.machine, tab.id, it)
+        }
     }
     if (menu) {
         val after = space.tabs.getOrNull(shown)?.id

@@ -1,7 +1,10 @@
-- Mouse: click, drag and scroll in TUIs; drag to select and copy; Ctrl+hover underlines links
-- Taps click in programs that use the mouse
-- Fixed: ":" not reaching Neovim from a hardware keyboard
-- Fixed: white flash over the terminal when typing on a hardware keyboard
-- Switching terminals no longer jumps in width
+- Space and tab menus (long-press or right-click): rename, close
+- Drag spaces to reorder
+- Pin agents to the top
+- Git worktrees: new, open and remove from a space's menu
+- Mouse in TUIs: click, drag, scroll, hover; drag to select; Ctrl+hover links
 - New tabs open in the current terminal's folder
-- Block characters (█ ▀ ▐ …) draw without gaps between cells
+- Fixed: ":" not reaching Neovim from a hardware keyboard
+- Fixed: white flash when typing on a hardware keyboard
+- Switching terminals no longer jumps in width
+- Block characters draw without gaps

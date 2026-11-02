@@ -14,8 +14,6 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import dev.herdr.mobile.notify.Notifier
-import dev.herdr.mobile.session.hostOf
-import dev.herdr.mobile.session.localOf
 import dev.herdr.mobile.session.Actions
 import dev.herdr.mobile.session.Host
 import dev.herdr.mobile.session.HostState
@@ -24,13 +22,18 @@ import dev.herdr.mobile.session.LocalNetwork
 import dev.herdr.mobile.session.Machine
 import dev.herdr.mobile.session.Prefs
 import dev.herdr.mobile.session.Session
+import dev.herdr.mobile.session.Space
 import dev.herdr.mobile.session.Store
+import dev.herdr.mobile.session.hostOf
+import dev.herdr.mobile.session.localOf
 import dev.herdr.mobile.session.parseTarget
 import dev.herdr.mobile.session.reason
 import dev.herdr.ssh.PhoneKey
 import dev.herdr.ssh.Seen
+import herdr.core.Checkout
 import herdr.core.Choice
 import herdr.core.Client
+import herdr.core.Repo
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
@@ -50,15 +53,18 @@ data class DialogState(
     val onConfirm: () -> Unit = {},
 )
 
-class AgentsViewModel(live: Live, selection: Selection) : ViewModel() {
-    val session: StateFlow<Session> = live.session
-    val current: StateFlow<String?> = selection.terminal
+class AgentsViewModel(live: Live, actions: Actions, store: Store, selection: Selection) :
+    LayoutViewModel(live, actions, store, selection) {
+    /** To the top of the agent lists, on every screen; or back. */
+    fun pin(terminal: String, pinned: Boolean) = attempt(if (pinned) "Could not pin it" else "Could not unpin it") {
+        actions.pin(terminal, pinned)
+    }
 }
 
-/** New and close for spaces and tabs, with their dialogs. */
+/** New, rename, move and close for spaces and tabs, with their dialogs. */
 abstract class LayoutViewModel(
     protected val live: Live,
-    private val actions: Actions,
+    protected val actions: Actions,
     private val store: Store,
     selection: Selection,
 ) : ViewModel() {
@@ -77,7 +83,7 @@ abstract class LayoutViewModel(
         _dialog.value = null
     }
 
-    private fun attempt(what: String, block: suspend () -> Unit) {
+    protected fun attempt(what: String, block: suspend () -> Unit) {
         viewModelScope.launch {
             try {
                 block()
@@ -126,6 +132,44 @@ abstract class LayoutViewModel(
 
     fun closeSpace(machine: String?, space: String) = confirm(space, null) {
         attempt("Could not close the space") { actions.closeSpace(machine, space) }
+    }
+
+    fun renameSpace(machine: String?, space: String, name: String) = attempt("Could not rename the space") {
+        actions.renameSpace(machine, space, name)
+    }
+
+    fun renameTab(machine: String?, tab: String, name: String) = attempt("Could not rename the tab") {
+        actions.renameTab(machine, tab, name)
+    }
+
+    fun moveSpace(machine: String?, space: String, index: Int) = attempt("Could not move the space") {
+        actions.moveSpace(machine, space, index)
+    }
+
+    // Worktrees: the dialogs show what goes wrong themselves, so these throw.
+
+    suspend fun repoOf(space: String) = actions.repoOf(space)
+
+    suspend fun home(space: Space) = actions.home(space.host, space.machine)
+
+    suspend fun checkouts(space: Space, repo: Repo) = actions.checkouts(space.host, space.machine, repo)
+
+    suspend fun newWorktree(space: Space, repo: Repo, branch: String) {
+        _opened.send(actions.newWorktree(space.host, space.machine, repo, branch).address)
+    }
+
+    suspend fun openCheckout(space: Space, checkout: Checkout, all: List<Checkout>) {
+        actions.openCheckout(space.host, space.machine, checkout, all)?.let { _opened.send(it) }
+    }
+
+    suspend fun removeRisk(space: Space, repo: Repo) = actions.removeRisk(space.host, space.machine, repo)
+
+    /**
+     * Here, not in the dialog: closing the space first takes its row, the
+     * dialog and their scope with it, before git would remove the checkout.
+     */
+    fun removeWorktree(space: Space, repo: Repo, force: Boolean) = attempt("Could not remove the worktree") {
+        actions.removeWorktree(space.machine, space.id, repo, force)
     }
 }
 
@@ -250,7 +294,7 @@ class MainViewModel(
 val AppViewModels: ViewModelProvider.Factory = viewModelFactory {
     fun container(extras: CreationExtras) = (extras[APPLICATION_KEY] as HerdrApp).container
     initializer { container(this).run { MainViewModel(live, store, selection, started, localNetwork) } }
-    initializer { container(this).run { AgentsViewModel(live, selection) } }
+    initializer { container(this).run { AgentsViewModel(live, actions, store, selection) } }
     initializer { container(this).run { SpacesViewModel(live, actions, store, selection) } }
     initializer { container(this).run { TerminalViewModel(live, actions, store, selection) } }
     initializer { container(this).run { SettingsViewModel(live, store, notifier, key, localNetwork) } }

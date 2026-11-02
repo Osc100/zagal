@@ -1,6 +1,7 @@
-// New and closed spaces and tabs, written to the desktop's `herdr-app` layout
-// document the way the desktop writes it (herdr-app/src/window.rs `new_space`,
-// `new_tab`, `space.close`, `tab.close`; mirror.rs `Document`), so both
+// New, renamed, moved and closed spaces and tabs, written to the desktop's
+// `herdr-app` layout document the way the desktop writes it (herdr-app/src/
+// window.rs `new_space`, `new_tab`, `space.rename`, `space.move`, `space.close`,
+// `tab.rename`, `tab.close`; mirror.rs `Document`), so both
 // screens show the same thing. Writes carry the version they were read at;
 // another screen writing first means read again and redo the one step.
 //
@@ -374,6 +375,64 @@ suspend fun newSpace(
         }
         doc.with("spaces", JsonArray(doc.objects("spaces") + added)) to Where(space, tabId)
     }
+}
+
+/**
+ * Renames a space (window.rs `space.rename`): "" names it after its folder
+ * again, on every screen.
+ */
+suspend fun renameSpace(client: Client, machine: String?, space: String, name: String) {
+    need(client, "doc.set")
+    val sid = local(space, machine)
+    update(client, machine) { doc ->
+        val spaces = doc.objects("spaces")
+        val i = spaces.indexOfFirst { it.string("id") == sid }
+        if (i < 0) return@update null to Unit
+        doc.with("spaces", JsonArray(spaces.replaced(i, spaces[i].with("name", JsonPrimitive(name.trim()))))) to Unit
+    }
+}
+
+/** Renames a tab (window.rs `tab.rename`): "" shows its position again. */
+suspend fun renameTab(client: Client, machine: String?, tab: String, name: String) {
+    need(client, "doc.set")
+    val tid = local(tab, machine)
+    update(client, machine) { doc ->
+        val spaces = doc.objects("spaces")
+        val i = spaces.indexOfFirst { s -> s.objects("tabs").any { it.string("id") == tid } }
+        if (i < 0) return@update null to Unit
+        val tabs = spaces[i].objects("tabs").map { if (it.string("id") == tid) it.with("name", JsonPrimitive(name.trim())) else it }
+        doc.with("spaces", JsonArray(spaces.replaced(i, spaces[i].with("tabs", JsonArray(tabs))))) to Unit
+    }
+}
+
+/**
+ * Moves a space to `index` among its machine's (model.rs `move_space`, which
+ * keeps it among them: each machine's spaces are its own document's).
+ */
+suspend fun moveSpace(client: Client, machine: String?, space: String, index: Int) {
+    need(client, "doc.set")
+    val sid = local(space, machine)
+    update(client, machine) { doc ->
+        val spaces = doc.objects("spaces").toMutableList()
+        val from = spaces.indexOfFirst { it.string("id") == sid }
+        val to = index.coerceIn(0, (spaces.size - 1).coerceAtLeast(0))
+        if (from < 0 || from == to) return@update null to Unit
+        spaces.add(to, spaces.removeAt(from))
+        doc.with("spaces", JsonArray(spaces)) to Unit
+    }
+}
+
+/**
+ * Pins an agent to the top of the agent lists, or unpins it (window.rs
+ * `terminal.pin`): kept on the terminal as its `herdr.pinned` label, so every
+ * screen shows it, and gone when the terminal ends.
+ */
+suspend fun pin(client: Client, terminal: String, pinned: Boolean) {
+    need(client, "terminal.label")
+    client.call("terminal.label", buildJsonObject {
+        put("terminal", terminal)
+        put("labels", buildJsonObject { put("herdr.pinned", if (pinned) "1" else "") })
+    })
 }
 
 data class Confirm(val title: String, val detail: String)

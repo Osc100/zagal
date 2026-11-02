@@ -43,6 +43,10 @@ data class Space(
     /** Its avatar color: its position, in the desktop's avatar order. */
     val avatar: Int,
     val tabs: List<Tab>,
+    /** The name someone gave it; "" when it's named after its folder. */
+    val given: String = name,
+    /** Where it was made (its terminals may have moved on). */
+    val folder: String = "",
 )
 
 data class Terminal(
@@ -63,6 +67,8 @@ data class Terminal(
     val since: Long?,
     val space: String?,
     val tab: String?,
+    /** Pinned to the top of the agent lists, on every screen. */
+    val pinned: Boolean = false,
 )
 
 data class Session(

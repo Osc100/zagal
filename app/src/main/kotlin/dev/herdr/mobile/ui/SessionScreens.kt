@@ -6,6 +6,9 @@ package dev.herdr.mobile.ui
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.hoverable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsHoveredAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -20,6 +23,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -34,20 +38,30 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.painter.Painter
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.zIndex
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.herdr.mobile.AgentsViewModel
 import dev.herdr.mobile.LayoutViewModel
@@ -66,7 +80,9 @@ import dev.herdr.mobile.session.ref
 import dev.herdr.mobile.session.spaceAttention
 import herdr.core.Attention
 import herdr.core.Choice
+import herdr.core.Repo
 import herdr.core.programNamed
+import kotlin.math.roundToInt
 
 /** A tab's screen: its top bar (the tab bar's icon and title, and where the phone is connected) over its content. */
 @OptIn(ExperimentalMaterial3Api::class)
@@ -138,11 +154,17 @@ fun AgentsList(vm: AgentsViewModel, onOpen: (String) -> Unit, onAddHost: () -> U
             return
         }
         LazyColumn(contentPadding = PaddingValues(bottom = 24.dp)) {
+            // Pinned ones first, as the desktop's agents list (agents/main.js), then by what they need.
+            val pinned = agents.filter { it.pinned }
+            if (pinned.isNotEmpty()) {
+                if (!rail) item(key = "pinned") { GroupTitle("Pinned", pinned.size, MaterialTheme.colorScheme.onSurfaceVariant, dense) }
+                items(pinned, key = { it.address }) { t -> AgentRow(t, t.address == current, now, onOpen, vm, dense, rail) }
+            }
             for (a in Attention.entries) {
-                val members = agents.filter { it.attention == a }
+                val members = agents.filter { it.attention == a && !it.pinned }
                 if (members.isEmpty()) continue
                 if (!rail) item(key = a.name) { GroupTitle(SECTION.getValue(a), members.size, tone(a), dense) }
-                items(members, key = { it.address }) { t -> AgentRow(t, t.address == current, now, onOpen, dense, rail) }
+                items(members, key = { it.address }) { t -> AgentRow(t, t.address == current, now, onOpen, vm, dense, rail) }
             }
         }
     }
@@ -197,41 +219,73 @@ private fun RailRow(on: Boolean, click: Modifier, height: Dp = 36.dp, mark: @Com
     }
 
 @Composable
-private fun AgentRow(t: Terminal, on: Boolean, now: Long, onOpen: (String) -> Unit, dense: Boolean = false, rail: Boolean = false) {
-    val click = Modifier.combinedClickable(onClickLabel = "Open terminal") { onOpen(t.address) }
+private fun AgentRow(
+    t: Terminal,
+    on: Boolean,
+    now: Long,
+    onOpen: (String) -> Unit,
+    vm: AgentsViewModel,
+    dense: Boolean = false,
+    rail: Boolean = false,
+) {
+    var menu by remember { mutableStateOf(false) }
+    val pin = { vm.pin(t.address, !t.pinned) }
+    // A mouse over the row shows the desktop's pin button (agents/main.js).
+    val hover = remember { MutableInteractionSource() }
+    val hovered by hover.collectIsHoveredAsState()
+    val click = Modifier.hoverable(hover)
+        .combinedClickable(onClickLabel = "Open terminal") { onOpen(t.address) }
+        .rowMenu("Agent menu", onMenu = { menu = true })
+    val agentMenu = @Composable {
+        RowMenu(
+            menu,
+            { menu = false },
+            listOf(MenuItem(if (t.pinned) "Unpin" else "Pin to the top", { if (t.pinned) Lucide.PinOff else Lucide.Pin }, onClick = pin)),
+        )
+    }
     if (rail) {
-        RailRow(on, click, mark = { StatusMark(t.attention, compact = true) }) { ProgramIcon(t.program, 16.dp) }
+        Box {
+            RailRow(on, click, mark = { StatusMark(t.attention, compact = true) }) { ProgramIcon(t.program, 16.dp) }
+            agentMenu()
+        }
         return
     }
     if (dense) {
         // One line: the tool's icon, the session's title, where and how long.
         val dim = MaterialTheme.colorScheme.onSurfaceVariant
-        SlimRow(on, click) {
-            ProgramIcon(t.program, 16.dp)
-            Text(t.title ?: t.name, Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            t.machine?.let { Text(it, style = MaterialTheme.typography.labelSmall, color = dim, maxLines = 1) }
-            t.since?.let { Text(duration(now - it), style = MaterialTheme.typography.labelSmall.merge(tabular), color = dim) }
-            StatusMark(t.attention, compact = true)
+        Box {
+            SlimRow(on, click) {
+                ProgramIcon(t.program, 16.dp)
+                Text(t.title ?: t.name, Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                if (hovered) HeadAction(if (t.pinned) Lucide.PinOff else Lucide.Pin, if (t.pinned) "Unpin" else "Pin to the top", pin)
+                t.machine?.let { Text(it, style = MaterialTheme.typography.labelSmall, color = dim, maxLines = 1) }
+                t.since?.let { Text(duration(now - it), style = MaterialTheme.typography.labelSmall.merge(tabular), color = dim) }
+                StatusMark(t.attention, compact = true)
+            }
+            agentMenu()
         }
         return
     }
     // The session's title on top, the tool (claude-code, opencode, …) under it.
-    ListItem(
-        headlineContent = { Text(t.title ?: t.name, maxLines = 1, overflow = TextOverflow.Ellipsis) },
-        supportingContent = t.title?.let { { Text(t.name, maxLines = 1, overflow = TextOverflow.Ellipsis) } },
-        leadingContent = { ProgramIcon(t.program, 20.dp) },
-        trailingContent = {
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                Column(horizontalAlignment = Alignment.End) {
-                    t.since?.let { Text(duration(now - it), style = tabular) }
-                    t.machine?.let { Text(it, style = MaterialTheme.typography.labelSmall) }
+    Box {
+        ListItem(
+            headlineContent = { Text(t.title ?: t.name, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+            supportingContent = t.title?.let { { Text(t.name, maxLines = 1, overflow = TextOverflow.Ellipsis) } },
+            leadingContent = { ProgramIcon(t.program, 20.dp) },
+            trailingContent = {
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Column(horizontalAlignment = Alignment.End) {
+                        t.since?.let { Text(duration(now - it), style = tabular) }
+                        t.machine?.let { Text(it, style = MaterialTheme.typography.labelSmall) }
+                    }
+                    StatusMark(t.attention, compact = true)
                 }
-                StatusMark(t.attention, compact = true)
-            }
-        },
-        colors = selected(on),
-        modifier = click,
-    )
+            },
+            colors = selected(on),
+            modifier = click,
+        )
+        agentMenu()
+    }
 }
 
 @Composable
@@ -260,6 +314,7 @@ fun SpacesList(vm: SpacesViewModel, onOpen: (String) -> Unit, dense: Boolean = f
     }
     val grouped = session.machines.size > 1
     val here = session.terminals.find { it.address == current }?.space
+    val reorder = remember { Reorder() }
     LazyColumn(contentPadding = PaddingValues(bottom = 24.dp)) {
         // The desktop rail's +: a new space on the host's own machine.
         val home = session.machines.firstOrNull { it.name == null && it.state == MachineState.Connected }
@@ -307,7 +362,7 @@ fun SpacesList(vm: SpacesViewModel, onOpen: (String) -> Unit, dense: Boolean = f
                     )
                 }
             }
-            if (!shut) spaceRows(session.spaces.filter { it.host == m.host && it.machine == m.name }, session.terminals, here, vm, onOpen, dense, rail)
+            if (!shut) spaceRows(session.spaces.filter { it.host == m.host && it.machine == m.name }, session.terminals, here, vm, onOpen, reorder, dense, rail)
         }
     }
 }
@@ -370,53 +425,136 @@ private fun HeadAction(icon: Painter, label: String, onClick: () -> Unit) {
     )
 }
 
+/** A space being dragged to a new place among its machine's (one at a time). */
+private class Reorder {
+    var id by mutableStateOf<String?>(null)
+    var from by mutableIntStateOf(0)
+    var offset by mutableFloatStateOf(0f)
+
+    /** A row's height (px), to tell how many rows the drag went. */
+    var row by mutableIntStateOf(1)
+
+    fun target(last: Int) = (from + (offset / row).roundToInt()).coerceIn(0, last)
+}
+
 private fun LazyListScope.spaceRows(
     spaces: List<Space>,
     terminals: List<Terminal>,
     here: String?,
     vm: LayoutViewModel,
     onOpen: (String) -> Unit,
+    reorder: Reorder,
     dense: Boolean = false,
     rail: Boolean = false,
-) = items(spaces, key = { it.id }) { space ->
+) = itemsIndexed(spaces, key = { _, it -> it.id }) { i, space ->
     // Idle says nothing on a space's row.
     val mark = spaceAttention(space, terminals)?.takeIf { it != Attention.Idle }
     // A space opens on whatever in it needs you most.
     val target = terminals.filter { it.space == space.id }
         .maxByOrNull { (it.attention ?: Attention.Idle).priority }?.address
         ?: space.tabs.firstOrNull()?.terminals?.firstOrNull()
-    val click = Modifier.combinedClickable(
-        onClickLabel = "Open",
-        onLongClickLabel = "Close space",
-        onLongClick = { vm.closeSpace(space.machine, space.id) },
-    ) { target?.let(onOpen) }
-    if (rail) {
-        RailRow(space.id == here, click, mark = { if (mark != null) StatusMark(mark, compact = true) }) {
-            SpaceAvatar(space.name, space.avatar, 18.dp)
-        }
-        return@items
-    }
-    if (dense) {
-        SlimRow(space.id == here, click) {
-            SpaceAvatar(space.name, space.avatar, 18.dp)
-            Text(space.name, Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            if (mark != null) StatusMark(mark, compact = true)
-            Text("${space.tabs.size}", style = MaterialTheme.typography.labelMedium.merge(tabular), color = MaterialTheme.colorScheme.onSurfaceVariant)
-        }
-        return@items
-    }
-    ListItem(
-        headlineContent = { Text(space.name, maxLines = 1, overflow = TextOverflow.Ellipsis) },
-        leadingContent = { SpaceAvatar(space.name, space.avatar) },
-        trailingContent = {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                if (mark != null) StatusMark(mark, compact = true)
-                Text("${space.tabs.size}", style = tabular)
+    var menu by remember { mutableStateOf(false) }
+    var renaming by remember { mutableStateOf(false) }
+    // Its checkout, looked up as the menu opens (mods/menu `checkout`), and the worktree dialog open on it.
+    var repo by remember { mutableStateOf<Repo?>(null) }
+    var worktree by remember { mutableStateOf<Pair<WorktreeAction, Repo>?>(null) }
+    LaunchedEffect(menu) { if (menu) repo = vm.repoOf(space.id) }
+    val haptic = LocalHapticFeedback.current
+    val drag = remember(space.id, i) {
+        object : RowDrag {
+            override fun start() {
+                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                reorder.id = space.id
+                reorder.from = i
+                reorder.offset = 0f
             }
-        },
-        colors = selected(space.id == here),
-        modifier = click,
-    )
+
+            override fun to(offset: Float) {
+                reorder.offset = offset
+            }
+
+            override fun end() {
+                val to = reorder.target(spaces.lastIndex)
+                reorder.id = null
+                if (to != i) vm.moveSpace(space.machine, space.id, to)
+            }
+
+            override fun cancel() {
+                reorder.id = null
+            }
+        }
+    }
+    val click = Modifier.combinedClickable(onClickLabel = "Open") { target?.let(onOpen) }
+        .rowMenu("Space menu", onMenu = { menu = true }, drag = drag)
+    // The dragged row follows the pointer; a line marks where it lands (as the desktop's).
+    val dragging = reorder.id == space.id
+    val landing = reorder.id != null && !dragging && spaces.any { it.id == reorder.id } && reorder.target(spaces.lastIndex) == i
+    val accent = MaterialTheme.colorScheme.primary
+    val lifted = MaterialTheme.colorScheme.surfaceContainerHigh
+    val place = Modifier
+        .onSizeChanged { if (it.height > 0) reorder.row = it.height }
+        .zIndex(if (dragging) 1f else 0f)
+        .graphicsLayer {
+            if (dragging) {
+                translationY = reorder.offset
+                shadowElevation = 6.dp.toPx()
+                shape = RoundedCornerShape(8.dp)
+                clip = true
+            }
+        }
+        .then(if (dragging) Modifier.background(lifted) else Modifier)
+        .drawWithContent {
+            drawContent()
+            if (landing) {
+                val y = if (reorder.from < i) size.height - 1.dp.toPx() else 1.dp.toPx()
+                drawLine(accent, Offset(0f, y), Offset(size.width, y), 2.dp.toPx())
+            }
+        }
+    Box(place) {
+        when {
+            rail -> RailRow(space.id == here, click, mark = { if (mark != null) StatusMark(mark, compact = true) }) {
+                SpaceAvatar(space.name, space.avatar, 18.dp)
+            }
+            dense -> SlimRow(space.id == here, click) {
+                SpaceAvatar(space.name, space.avatar, 18.dp)
+                Text(space.name, Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                if (mark != null) StatusMark(mark, compact = true)
+                Text("${space.tabs.size}", style = MaterialTheme.typography.labelMedium.merge(tabular), color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            else -> ListItem(
+                headlineContent = { Text(space.name, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                leadingContent = { SpaceAvatar(space.name, space.avatar) },
+                trailingContent = {
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                        if (mark != null) StatusMark(mark, compact = true)
+                        Text("${space.tabs.size}", style = tabular)
+                    }
+                },
+                colors = selected(space.id == here),
+                modifier = click,
+            )
+        }
+        // The desktop's space menu (mods/menu `space`).
+        RowMenu(
+            menu,
+            { menu = false },
+            buildList {
+                add(MenuItem("Rename", { Lucide.SquarePen }) { renaming = true })
+                repo?.let { checkout ->
+                    add(MenuItem("New worktree", { Lucide.GitBranch }) { worktree = WorktreeAction.New to checkout })
+                    add(MenuItem("Open worktree", { Lucide.GitBranch }) { worktree = WorktreeAction.Open to checkout })
+                    if (checkout.linked) add(MenuItem("Remove worktree", { Lucide.GitBranch }) { worktree = WorktreeAction.Remove to checkout })
+                }
+                add(MenuItem("Close", { Lucide.X }, close = true) { vm.closeSpace(space.machine, space.id) })
+            },
+        )
+    }
+    worktree?.let { (action, checkout) -> WorktreeDialog(action, space, checkout, vm) { worktree = null } }
+    if (renaming) {
+        RenameDialog("Rename space", space.given, "Empty: named after its folder", { renaming = false }) {
+            vm.renameSpace(space.machine, space.id, it)
+        }
+    }
 }
 
 /**
