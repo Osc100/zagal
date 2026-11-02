@@ -426,6 +426,9 @@ private fun GeneralSection(vm: SettingsViewModel) {
     }
     SwitchItem("Alert sound", prefs.sounds, enabled = on) { vm.setPrefs { it.copy(sounds = !it.sounds) } }
     SwitchItem("Confirm before closing", prefs.confirmClose, "Tabs and spaces") { vm.setPrefs { it.copy(confirmClose = !it.confirmClose) } }
+    SwitchItem("Full screen", prefs.fullscreen, "Hides the status and navigation bars. Swipe from an edge to see them.") {
+        vm.setPrefs { it.copy(fullscreen = !it.fullscreen) }
+    }
 }
 
 @Composable
@@ -467,6 +470,12 @@ private fun TerminalSection(vm: SettingsViewModel) {
     )
     SwitchItem("Ligatures", prefs.drawLigatures, if (!font.ligatures) "None in ${font.label}" else null, enabled = font.ligatures) {
         vm.setPrefs { it.copy(ligatures = !it.ligatures) }
+    }
+    SwitchItem("Key bar", prefs.keyBar, "Esc, Tab, Ctrl, Alt, arrows and paste, under the terminal") {
+        vm.setPrefs { it.copy(keyBar = !it.keyBar) }
+    }
+    SwitchItem("Only while typing", prefs.keyBarTyping, "Shows the key bar only while the keyboard is up", enabled = prefs.keyBar) {
+        vm.setPrefs { it.copy(keyBarTyping = !it.keyBarTyping) }
     }
 }
 

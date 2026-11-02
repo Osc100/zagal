@@ -74,12 +74,16 @@ class HerdrColors(val name: String) {
 /** `#rrggbb[aa]`, the spelling the terminal view takes. */
 fun Color.hex(): String = hex(toArgb().toLong() and 0xFFFFFFFFL)
 
-/** Herdr's colors as Material roles. */
+/**
+ * Herdr's colors as Material roles. Primary is the accent, as the desktop maps
+ * it for its own controls (herdr-app `mods.rs` `apply_theme`): switches, radio
+ * buttons, buttons and text fields take it.
+ */
 fun HerdrColors.scheme(): ColorScheme {
     val base = if (light) lightColorScheme() else darkColorScheme()
     return base.copy(
-        primary = solid,
-        onPrimary = solidForeground,
+        primary = accent,
+        onPrimary = accentForeground,
         primaryContainer = selected,
         onPrimaryContainer = foreground,
         secondary = accent,

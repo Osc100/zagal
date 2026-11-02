@@ -17,6 +17,7 @@ import dev.herdr.mobile.session.drawLigatures
 import dev.herdr.mobile.session.hostOf
 import dev.herdr.mobile.session.localOf
 import dev.herdr.mobile.session.reason
+import dev.herdr.terminal.KeyBarMode
 import dev.herdr.terminal.KeyColors
 import dev.herdr.terminal.TerminalTheme
 import dev.herdr.terminal.TerminalView
@@ -154,6 +155,13 @@ class TerminalHost(
         v.setTypeface(typeface(prefs.font))
         v.setFontSize(prefs.fontSize.toFloat())
         v.setLigatures(prefs.drawLigatures)
+        v.setKeyBar(
+            when {
+                !prefs.keyBar -> KeyBarMode.OFF
+                prefs.keyBarTyping -> KeyBarMode.TYPING
+                else -> KeyBarMode.ALWAYS
+            },
+        )
         v.setTheme(
             TerminalTheme(
                 background = colors.background.hex(),
