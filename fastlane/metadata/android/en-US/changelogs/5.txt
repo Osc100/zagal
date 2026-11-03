@@ -1,0 +1,8 @@
+- Fixed: rows left blank after coming back to the app
+- Box drawing, braille, powerline and mosaics without gaps
+- Ctrl+Shift+V pastes, Ctrl+Shift+C copies, as in a Linux terminal
+- Input methods show the text being composed at the cursor
+- Emoji take two cells; overlined text; hollow cursor when unfocused
+- Fixed: cursor on wide characters, solid block cursor, readable selection
+- Fixed: stripes when a program changes the background color
+- Smoother under heavy output
