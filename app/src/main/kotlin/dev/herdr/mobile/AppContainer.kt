@@ -10,6 +10,7 @@ import dev.herdr.mobile.notify.Notifier
 import dev.herdr.mobile.session.Actions
 import dev.herdr.mobile.session.Live
 import dev.herdr.mobile.session.LocalNetwork
+import dev.herdr.mobile.session.SpaceGit
 import dev.herdr.mobile.session.Store
 import dev.herdr.ssh.PhoneKey
 import kotlinx.coroutines.CoroutineScope
@@ -53,6 +54,7 @@ class AppContainer(context: Context) {
     val live = Live(store, key, localNetwork, scope)
     val actions = Actions(live)
     val selection = Selection(store, scope)
+    val git = SpaceGit(live, scope)
 
     /** Past the opening screen: once per run, not again each time the activity is made. */
     val started = MutableStateFlow(false)

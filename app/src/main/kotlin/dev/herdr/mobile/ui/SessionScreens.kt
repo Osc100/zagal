@@ -31,6 +31,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.ListItemDefaults
+import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Text
@@ -81,6 +82,10 @@ import dev.herdr.mobile.session.ref
 import dev.herdr.mobile.session.spaceAttention
 import herdr.core.Attention
 import herdr.core.Choice
+import herdr.core.Nested
+import herdr.core.PlaceGit
+import herdr.core.gitTail
+import herdr.core.nest
 import herdr.core.Repo
 import herdr.core.programNamed
 import kotlin.math.roundToInt
@@ -301,6 +306,7 @@ fun SpacesList(vm: SpacesViewModel, onOpen: (String) -> Unit, dense: Boolean = f
     val session by vm.session.collectAsStateWithLifecycle()
     val current by vm.current.collectAsStateWithLifecycle()
     val dialog by vm.dialog.collectAsStateWithLifecycle()
+    val git by vm.git.collectAsStateWithLifecycle()
     LaunchedEffect(vm) { vm.opened.collect(onOpen) }
     AppDialog(dialog, vm::dismiss)
     var folded by rememberSaveable { mutableStateOf(listOf<String>()) }
@@ -363,7 +369,7 @@ fun SpacesList(vm: SpacesViewModel, onOpen: (String) -> Unit, dense: Boolean = f
                     )
                 }
             }
-            if (!shut) spaceRows(session.spaces.filter { it.host == m.host && it.machine == m.name }, session.terminals, here, vm, onOpen, reorder, dense, rail)
+            if (!shut) spaceRows(session.spaces.filter { it.host == m.host && it.machine == m.name }, git, session.terminals, here, vm, onOpen, reorder, dense, rail)
         }
     }
 }
@@ -438,8 +444,13 @@ private class Reorder {
     fun target(last: Int) = (from + (offset / row).roundToInt()).coerceIn(0, last)
 }
 
+/**
+ * A machine's spaces, each worktree under its repo's space as on the desktop
+ * (herdr-app mods/spaces), with the git that's unusual about it after its name.
+ */
 private fun LazyListScope.spaceRows(
     spaces: List<Space>,
+    git: Map<String, PlaceGit>,
     terminals: List<Terminal>,
     here: String?,
     vm: LayoutViewModel,
@@ -447,114 +458,155 @@ private fun LazyListScope.spaceRows(
     reorder: Reorder,
     dense: Boolean = false,
     rail: Boolean = false,
-) = itemsIndexed(spaces, key = { _, it -> it.id }) { i, space ->
-    // Idle says nothing on a space's row.
-    val mark = spaceAttention(space, terminals)?.takeIf { it != Attention.Idle }
-    // A space opens on whatever in it needs you most.
-    val target = terminals.filter { it.space == space.id }
-        .maxByOrNull { (it.attention ?: Attention.Idle).priority }?.address
-        ?: space.tabs.firstOrNull()?.terminals?.firstOrNull()
-    var menu by remember { mutableStateOf(false) }
-    var renaming by remember { mutableStateOf(false) }
-    // Its checkout, looked up as the menu opens (mods/menu `checkout`), and the worktree dialog open on it.
-    var repo by remember { mutableStateOf<Repo?>(null) }
-    var worktree by remember { mutableStateOf<Pair<WorktreeAction, Repo>?>(null) }
-    LaunchedEffect(menu) { if (menu) repo = vm.repoOf(space.id) }
-    val haptic = LocalHapticFeedback.current
-    val drag = remember(space.id, i) {
-        object : RowDrag {
-            override fun start() {
-                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                reorder.id = space.id
-                reorder.from = i
-                reorder.offset = 0f
-            }
+) {
+    val rows = nest(spaces) { git[it.id] }
+    itemsIndexed(rows, key = { _, it -> it.space.id }) { i, row ->
+        val space = row.space
+        // Idle says nothing on a space's row.
+        val mark = spaceAttention(space, terminals)?.takeIf { it != Attention.Idle }
+        // A space opens on whatever in it needs you most.
+        val target = terminals.filter { it.space == space.id }
+            .maxByOrNull { (it.attention ?: Attention.Idle).priority }?.address
+            ?: space.tabs.firstOrNull()?.terminals?.firstOrNull()
+        var menu by remember { mutableStateOf(false) }
+        var renaming by remember { mutableStateOf(false) }
+        // Its checkout, looked up as the menu opens (mods/menu `checkout`), and the worktree dialog open on it.
+        var repo by remember { mutableStateOf<Repo?>(null) }
+        var worktree by remember { mutableStateOf<Pair<WorktreeAction, Repo>?>(null) }
+        LaunchedEffect(menu) { if (menu) repo = vm.repoOf(space.id) }
+        val haptic = LocalHapticFeedback.current
+        val drag = remember(space.id, i, rows) {
+            object : RowDrag {
+                override fun start() {
+                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                    reorder.id = space.id
+                    reorder.from = i
+                    reorder.offset = 0f
+                }
 
-            override fun to(offset: Float) {
-                reorder.offset = offset
-            }
+                override fun to(offset: Float) {
+                    reorder.offset = offset
+                }
 
-            override fun end() {
-                val to = reorder.target(spaces.lastIndex)
-                reorder.id = null
-                if (to != i) vm.moveSpace(space.machine, space.id, to)
-            }
+                override fun end() {
+                    val to = reorder.target(rows.lastIndex)
+                    reorder.id = null
+                    // Rows are in the order shown; the core's is the spaces'.
+                    if (to != i) vm.moveSpace(space.machine, space.id, spaces.indexOfFirst { it.id == rows[to].space.id })
+                }
 
-            override fun cancel() {
-                reorder.id = null
+                override fun cancel() {
+                    reorder.id = null
+                }
             }
         }
-    }
-    val click = Modifier.combinedClickable(onClickLabel = "Open") { target?.let(onOpen) }
-        .rowMenu("Space menu", onMenu = { menu = true }, drag = drag)
-    // The dragged row follows the pointer; a line marks where it lands (as the desktop's).
-    val dragging = reorder.id == space.id
-    val landing = reorder.id != null && !dragging && spaces.any { it.id == reorder.id } && reorder.target(spaces.lastIndex) == i
-    val accent = MaterialTheme.colorScheme.primary
-    val lifted = MaterialTheme.colorScheme.surfaceContainerHigh
-    val place = Modifier
-        .onSizeChanged { if (it.height > 0) reorder.row = it.height }
-        .zIndex(if (dragging) 1f else 0f)
-        .graphicsLayer {
-            if (dragging) {
-                translationY = reorder.offset
-                shadowElevation = 6.dp.toPx()
-                shape = RoundedCornerShape(8.dp)
-                clip = true
+        val click = Modifier.combinedClickable(onClickLabel = "Open") { target?.let(onOpen) }
+            .rowMenu("Space menu", onMenu = { menu = true }, drag = drag)
+        // The dragged row follows the pointer; a line marks where it lands (as the desktop's).
+        val dragging = reorder.id == space.id
+        val landing = reorder.id != null && !dragging && rows.any { it.space.id == reorder.id } && reorder.target(rows.lastIndex) == i
+        val accent = MaterialTheme.colorScheme.primary
+        val lifted = MaterialTheme.colorScheme.surfaceContainerHigh
+        val place = Modifier
+            .onSizeChanged { if (it.height > 0) reorder.row = it.height }
+            .zIndex(if (dragging) 1f else 0f)
+            .graphicsLayer {
+                if (dragging) {
+                    translationY = reorder.offset
+                    shadowElevation = 6.dp.toPx()
+                    shape = RoundedCornerShape(8.dp)
+                    clip = true
+                }
             }
-        }
-        .then(if (dragging) Modifier.background(lifted) else Modifier)
-        .drawWithContent {
-            drawContent()
-            if (landing) {
-                val y = if (reorder.from < i) size.height - 1.dp.toPx() else 1.dp.toPx()
-                drawLine(accent, Offset(0f, y), Offset(size.width, y), 2.dp.toPx())
+            .then(if (dragging) Modifier.background(lifted) else Modifier)
+            .drawWithContent {
+                drawContent()
+                if (landing) {
+                    val y = if (reorder.from < i) size.height - 1.dp.toPx() else 1.dp.toPx()
+                    drawLine(accent, Offset(0f, y), Offset(size.width, y), 2.dp.toPx())
+                }
             }
-        }
-    Box(place.testTag("space-row")) {
-        when {
-            rail -> RailRow(space.id == here, click, mark = { if (mark != null) StatusMark(mark, compact = true) }) {
-                SpaceAvatar(space.name, space.avatar, 18.dp)
-            }
-            dense -> SlimRow(space.id == here, click) {
-                SpaceAvatar(space.name, space.avatar, 18.dp)
-                Text(space.name, Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                if (mark != null) StatusMark(mark, compact = true)
-                Text("${space.tabs.size}", style = MaterialTheme.typography.labelMedium.merge(tabular), color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-            else -> ListItem(
-                headlineContent = { Text(space.name, maxLines = 1, overflow = TextOverflow.Ellipsis) },
-                leadingContent = { SpaceAvatar(space.name, space.avatar) },
-                trailingContent = {
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                        if (mark != null) StatusMark(mark, compact = true)
-                        Text("${space.tabs.size}", style = tabular)
+        Box(place.testTag("space-row")) {
+            when {
+                rail -> RailRow(space.id == here, click, mark = { if (mark != null) StatusMark(mark, compact = true) }) {
+                    SpaceAvatar(space.name, space.avatar, 18.dp)
+                }
+                dense -> SlimRow(space.id == here, click) {
+                    if (row.tree) TreeMark(14.dp, indent = 14.dp) else SpaceAvatar(space.name, space.avatar, 18.dp)
+                    val name = MaterialTheme.typography.bodyMedium
+                    // As the desktop's: the name first, what's unusual about its git after it, dimmed.
+                    val git = row.git
+                    val tail = tailOf(row)
+                    if (git == null || tail == null) {
+                        Text(space.name, Modifier.weight(1f), style = name, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    } else {
+                        Text(space.name, Modifier.weight(1f, fill = false), style = name, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        GitTail(git, tail, Modifier.weight(1f), MaterialTheme.typography.labelMedium, end = true)
                     }
+                    if (mark != null) StatusMark(mark, compact = true)
+                    Text("${space.tabs.size}", style = MaterialTheme.typography.labelMedium.merge(tabular), color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                else -> ListItem(
+                    headlineContent = { Text(space.name, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                    supportingContent = row.git?.let { git ->
+                        tailOf(row)?.let { tail -> { GitTail(git, tail, Modifier, LocalTextStyle.current, end = false) } }
+                    },
+                    leadingContent = { if (row.tree) TreeMark(20.dp, indent = 16.dp) else SpaceAvatar(space.name, space.avatar) },
+                    trailingContent = {
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                            if (mark != null) StatusMark(mark, compact = true)
+                            Text("${space.tabs.size}", style = tabular)
+                        }
+                    },
+                    colors = selected(space.id == here),
+                    modifier = click,
+                )
+            }
+            // The desktop's space menu (mods/menu `space`).
+            RowMenu(
+                menu,
+                { menu = false },
+                buildList {
+                    add(MenuItem("Rename", { Lucide.SquarePen }) { renaming = true })
+                    repo?.let { checkout ->
+                        add(MenuItem("New worktree", { Lucide.GitBranch }) { worktree = WorktreeAction.New to checkout })
+                        add(MenuItem("Open worktree", { Lucide.GitBranch }) { worktree = WorktreeAction.Open to checkout })
+                        if (checkout.linked) add(MenuItem("Remove worktree", { Lucide.GitBranch }) { worktree = WorktreeAction.Remove to checkout })
+                    }
+                    add(MenuItem("Close", { Lucide.X }, close = true) { vm.closeSpace(space.machine, space.id) })
                 },
-                colors = selected(space.id == here),
-                modifier = click,
             )
         }
-        // The desktop's space menu (mods/menu `space`).
-        RowMenu(
-            menu,
-            { menu = false },
-            buildList {
-                add(MenuItem("Rename", { Lucide.SquarePen }) { renaming = true })
-                repo?.let { checkout ->
-                    add(MenuItem("New worktree", { Lucide.GitBranch }) { worktree = WorktreeAction.New to checkout })
-                    add(MenuItem("Open worktree", { Lucide.GitBranch }) { worktree = WorktreeAction.Open to checkout })
-                    if (checkout.linked) add(MenuItem("Remove worktree", { Lucide.GitBranch }) { worktree = WorktreeAction.Remove to checkout })
-                }
-                add(MenuItem("Close", { Lucide.X }, close = true) { vm.closeSpace(space.machine, space.id) })
-            },
-        )
-    }
-    worktree?.let { (action, checkout) -> WorktreeDialog(action, space, checkout, vm) { worktree = null } }
-    if (renaming) {
-        RenameDialog("Rename space", space.given, "Empty: named after its folder", { renaming = false }) {
-            vm.renameSpace(space.machine, space.id, it)
+        worktree?.let { (action, checkout) -> WorktreeDialog(action, space, checkout, vm) { worktree = null } }
+        if (renaming) {
+            RenameDialog("Rename space", space.given, "Empty: named after its folder", { renaming = false }) {
+                vm.renameSpace(space.machine, space.id, it)
+            }
         }
+    }
+}
+
+/** In place of a worktree space's avatar, as the desktop's: indented, its branch glyph. */
+@Composable
+private fun TreeMark(size: Dp, indent: Dp) {
+    Icon(Lucide.GitBranch, "Worktree", Modifier.padding(start = indent).size(size), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+}
+
+/** What a space's row says about its git ([gitTail]); null when nothing: no repo, or nothing unusual. */
+private fun tailOf(row: Nested<Space>): String? {
+    val g = row.git ?: return null
+    val tail = gitTail(g, row.tree, row.space.name)
+    return tail.takeIf { it.isNotEmpty() || g.ahead > 0 || g.behind > 0 }
+}
+
+/** A space's repo and branch where they're unusual ([gitTail]), then commits ahead (green) and behind (red) of upstream. */
+@Composable
+private fun GitTail(g: PlaceGit, tail: String, modifier: Modifier, style: TextStyle, end: Boolean) {
+    val dim = MaterialTheme.colorScheme.onSurfaceVariant
+    Row(modifier, horizontalArrangement = Arrangement.spacedBy(5.dp, if (end) Alignment.End else Alignment.Start), verticalAlignment = Alignment.CenterVertically) {
+        if (tail.isNotEmpty()) Text(tail, Modifier.weight(1f, fill = false), style = style, color = dim, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        if (g.ahead > 0) Text("\u2191${g.ahead}", style = style.merge(tabular), color = herdr.ansi[2], maxLines = 1)
+        if (g.behind > 0) Text("\u2193${g.behind}", style = style.merge(tabular), color = herdr.ansi[1], maxLines = 1)
     }
 }
 

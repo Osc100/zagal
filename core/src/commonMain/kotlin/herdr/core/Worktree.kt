@@ -232,12 +232,12 @@ private suspend fun submodules(client: Client, machine: String?, top: String): P
     return mods to unpushed
 }
 
-private class Ran(val code: Int, val out: String, val err: String) {
+internal class Ran(val code: Int, val out: String, val err: String) {
     val ok get() = code == 0
 }
 
 // main.js `git`: output trimmed.
-private suspend fun git(client: Client, machine: String?, cwd: String, vararg args: String): Ran =
+internal suspend fun git(client: Client, machine: String?, cwd: String, vararg args: String): Ran =
     exec(client, machine, listOf("git") + args, cwd).let { Ran(it.code, it.out.trim(), it.err.trim()) }
 
 /**

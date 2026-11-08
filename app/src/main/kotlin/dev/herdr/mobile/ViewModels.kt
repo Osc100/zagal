@@ -23,6 +23,7 @@ import dev.herdr.mobile.session.Machine
 import dev.herdr.mobile.session.Prefs
 import dev.herdr.mobile.session.Session
 import dev.herdr.mobile.session.Space
+import dev.herdr.mobile.session.SpaceGit
 import dev.herdr.mobile.session.Store
 import dev.herdr.mobile.session.hostOf
 import dev.herdr.mobile.session.localOf
@@ -33,6 +34,7 @@ import dev.herdr.ssh.Seen
 import herdr.core.Checkout
 import herdr.core.Choice
 import herdr.core.Client
+import herdr.core.PlaceGit
 import herdr.core.Repo
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.channels.Channel
@@ -173,8 +175,11 @@ abstract class LayoutViewModel(
     }
 }
 
-class SpacesViewModel(live: Live, actions: Actions, store: Store, selection: Selection) :
-    LayoutViewModel(live, actions, store, selection)
+class SpacesViewModel(live: Live, actions: Actions, store: Store, selection: Selection, git: SpaceGit) :
+    LayoutViewModel(live, actions, store, selection) {
+    /** Each space's git, to nest worktrees under their repo and say where it is. */
+    val git: StateFlow<Map<String, PlaceGit>> = git.bySpace
+}
 
 class TerminalViewModel(live: Live, actions: Actions, store: Store, private val selection: Selection) :
     LayoutViewModel(live, actions, store, selection) {
@@ -295,7 +300,7 @@ val AppViewModels: ViewModelProvider.Factory = viewModelFactory {
     fun container(extras: CreationExtras) = (extras[APPLICATION_KEY] as HerdrApp).container
     initializer { container(this).run { MainViewModel(live, store, selection, started, localNetwork) } }
     initializer { container(this).run { AgentsViewModel(live, actions, store, selection) } }
-    initializer { container(this).run { SpacesViewModel(live, actions, store, selection) } }
+    initializer { container(this).run { SpacesViewModel(live, actions, store, selection, git) } }
     initializer { container(this).run { TerminalViewModel(live, actions, store, selection) } }
     initializer { container(this).run { SettingsViewModel(live, store, notifier, key, localNetwork) } }
 }
