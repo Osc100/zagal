@@ -148,10 +148,14 @@ fun TerminalScreen(
             expandedHeight = 44.dp,
         )
 
-        // The system's photo picker: no permission, only what's picked is shared.
-        val pick = rememberLauncherForActivityResult(ActivityResultContracts.PickMultipleVisualMedia()) { host.sendImages(address, it) }
-        val image = { pick.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) }
-        if (space != null) TabStrip(space, session, address, vm, onImage = image.takeIf { address.isNotEmpty() })
+        // The system's pickers: no permission, only what's picked is shared.
+        val photos = rememberLauncherForActivityResult(ActivityResultContracts.PickMultipleVisualMedia()) { host.sendImages(address, it) }
+        val files = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { host.sendFiles(address, it) }
+        val attach = Attach(
+            photos = { photos.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
+            files = { files.launch(arrayOf("*/*")) },
+        )
+        if (space != null) TabStrip(space, session, address, vm, attach.takeIf { address.isNotEmpty() })
 
         // Lifted by exactly what the keyboard covers, so the terminal's key bar
         // sits right on top of it.
@@ -169,7 +173,7 @@ fun TerminalScreen(
                             modifier = Modifier.fillMaxSize(),
                         )
                     }
-                    val label = if (sending > 0) (if (sending == 1) "sending image…" else "sending $sending images…") else when (val s = state) {
+                    val label = sending ?: when (val s = state) {
                         PaneState.Live -> null
                         PaneState.Waiting -> "connecting…"
                         PaneState.Attaching -> "attaching…"
@@ -222,7 +226,7 @@ private fun Hosts(vm: TerminalViewModel) {
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun TabStrip(space: Space, session: Session, address: String, vm: TerminalViewModel, onImage: (() -> Unit)?) {
+private fun TabStrip(space: Space, session: Session, address: String, vm: TerminalViewModel, attach: Attach?) {
     var menu by rememberSaveable { mutableStateOf(false) }
     // The tab whose menu is open, and the one being renamed.
     var menuFor by remember { mutableStateOf<String?>(null) }
@@ -284,8 +288,8 @@ private fun TabStrip(space: Space, session: Session, address: String, vm: Termin
                     }
                 }
             }
-            // Beside +, on the phone and the tablet alike: images for the terminal's program.
-            onImage?.let { IconButton(it, Modifier.size(40.dp)) { Icon(Lucide.ImagePlus, "Send an image", Modifier.size(20.dp)) } }
+            // Beside +, on the phone and the tablet alike: photos or files for the terminal's program.
+            attach?.let { AttachButton(it) }
             IconButton({ menu = true }, Modifier.size(40.dp)) { Icon(Lucide.Plus, "New tab") }
         }
         HorizontalDivider()
@@ -302,5 +306,25 @@ private fun TabStrip(space: Space, session: Session, address: String, vm: Termin
         NewMenu("New tab in ${space.name}", space.host, space.machine, vm, onClose = { menu = false }) {
             vm.newTab(space.machine, space.id, after, address, it)
         }
+    }
+}
+
+/** The pickers that send to the terminal's program: Android's photo picker, and its files. */
+private class Attach(val photos: () -> Unit, val files: () -> Unit)
+
+/** Photos or files for the terminal's program, from a menu. */
+@Composable
+private fun AttachButton(attach: Attach) {
+    var open by remember { mutableStateOf(false) }
+    Box {
+        IconButton({ open = true }, Modifier.size(40.dp)) { Icon(Lucide.Paperclip, "Attach", Modifier.size(20.dp)) }
+        RowMenu(
+            open,
+            { open = false },
+            listOf(
+                MenuItem("Photos", { Lucide.ImagePlus }, onClick = attach.photos),
+                MenuItem("Files", { Lucide.File }, onClick = attach.files),
+            ),
+        )
     }
 }

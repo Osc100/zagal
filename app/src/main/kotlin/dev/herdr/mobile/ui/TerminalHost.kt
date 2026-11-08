@@ -25,6 +25,7 @@ import dev.herdr.mobile.session.Prefs
 import dev.herdr.mobile.session.drawLigatures
 import dev.herdr.mobile.session.hostOf
 import dev.herdr.mobile.session.localOf
+import dev.herdr.mobile.session.readFile
 import dev.herdr.mobile.session.readImage
 import dev.herdr.mobile.session.reason
 import dev.herdr.terminal.KeyBarMode
@@ -53,7 +54,9 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -302,33 +305,62 @@ class TerminalHost(
         }
     }
 
-    private val _sending = MutableStateFlow(0)
+    // Images and other files on their way to a terminal.
+    private val inFlight = MutableStateFlow(0 to 0)
 
-    /** Images on their way to a terminal, to show while they go. */
-    val sending: StateFlow<Int> = _sending
+    /** What's on its way to a terminal, to show while it goes ("sending 2 files…"); null when nothing is. */
+    val sending: StateFlow<String?> = inFlight.map { (images, files) ->
+        val n = images + files
+        when {
+            n == 0 -> null
+            files == 0 -> if (n == 1) "sending image…" else "sending $n images…"
+            else -> if (n == 1) "sending file…" else "sending $n files…"
+        }
+    }.stateIn(scope, SharingStarted.Eagerly, null)
+
+    /** Images for `address`'s program (picked, pasted, or the keyboard's), made ready for agents ([readImage]). */
+    fun sendImages(address: String, uris: List<Uri>) = send(address, uris, files = false)
+
+    /** Files for `address`'s program, as they are ([readFile]). */
+    fun sendFiles(address: String, uris: List<Uri>) = send(address, uris, files = true)
 
     /**
-     * Images for `address`'s program (picked, pasted, or the keyboard's):
-     * each copied beside it, on its machine, then where they landed pasted
-     * into it, as herdr-app pastes an image into a terminal elsewhere.
+     * Each copied beside `address`, on its machine, then where they landed
+     * pasted into it, as herdr-app pastes an image into a terminal elsewhere.
+     * One that can't go (too big, unreadable) doesn't stop the others.
      */
-    fun sendImages(address: String, uris: List<Uri>) {
+    private fun send(address: String, uris: List<Uri>, files: Boolean) {
         if (uris.isEmpty()) return
+        fun count(by: Int) = inFlight.update { (i, f) -> if (files) i to f + by else i + by to f }
         scope.launch {
-            _sending.value += uris.size
+            count(uris.size)
+            val failed = mutableListOf<String>()
             try {
                 val c = client(hostOf(address)).first() ?: error("Not connected")
-                val paths = uris.map { uri ->
-                    val image = withContext(Dispatchers.IO) { readImage(context.contentResolver, uri) }
-                    put(c, localOf(address), image.name, image.bytes)
+                val paths = uris.mapNotNull { uri ->
+                    try {
+                        val upload = withContext(Dispatchers.IO) {
+                            if (files) readFile(context.contentResolver, uri) else readImage(context.contentResolver, uri)
+                        }
+                        put(c, localOf(address), upload.name, upload.bytes)
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        failed += e.reason
+                        null
+                    }
                 }
-                kept[address]?.view?.paste(pasted(paths))
+                if (paths.isNotEmpty()) kept[address]?.view?.paste(pasted(paths))
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                Toast.makeText(context, "Couldn't send the image: ${e.reason}", Toast.LENGTH_LONG).show()
+                failed += e.reason
             } finally {
-                _sending.value -= uris.size
+                count(-uris.size)
+            }
+            if (failed.isNotEmpty()) {
+                val what = if (files) "file" else "image"
+                Toast.makeText(context, "Couldn't send the $what: ${failed.joinToString("; ")}", Toast.LENGTH_LONG).show()
             }
         }
     }

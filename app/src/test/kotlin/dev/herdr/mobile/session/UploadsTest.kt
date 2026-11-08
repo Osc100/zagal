@@ -3,7 +3,7 @@ package dev.herdr.mobile.session
 import kotlin.test.Test
 import kotlin.test.assertEquals
 
-class ImagesTest {
+class UploadsTest {
     @Test
     fun keepsTheNameWithWhatItIsNow() {
         assertEquals("PXL_20261108.png", named("PXL_20261108.png", "png", 0))
@@ -21,5 +21,19 @@ class ImagesTest {
     @Test
     fun aNameIsOneFile() {
         assertEquals("a_b.png", named("a/b.png", "png", 0))
+    }
+
+    @Test
+    fun aFileKeepsItsName() {
+        assertEquals("build log (2).txt", fileName("build log (2).txt", 0))
+        assertEquals("a_b.csv", fileName("a/b.csv", 0))
+        assertEquals("a_b.csv", fileName("a\\b.csv", 0))
+        assertEquals("file-7", fileName(null, 7))
+        assertEquals("file-7", fileName(" ", 7))
+    }
+
+    @Test
+    fun tooBigSaysWhatTakesIt() {
+        assertEquals("dump.sql is over 8 MB, the most herdr-core takes in one file", tooBig("dump.sql"))
     }
 }
