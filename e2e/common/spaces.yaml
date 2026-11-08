@@ -1,0 +1,11 @@
+# The spaces list on screen, whatever the device: a tablet's sidebar always
+# shows it; on a phone it's the Spaces tab. Opened by its link, not the tab
+# bar: a keyboard left up (after typing in a terminal) covers the bar, and
+# hideKeyboard presses Back when there's none, which can leave the app.
+appId: io.github.osc100.zagal.e2e
+---
+- runFlow:
+    when:
+      notVisible: New space
+    commands:
+      - openLink: zagal-e2e://spaces

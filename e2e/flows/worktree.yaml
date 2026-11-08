@@ -5,6 +5,7 @@ appId: io.github.osc100.zagal.e2e
 name: worktree
 ---
 - launchApp
+- runFlow: ../common/spaces.yaml
 # The space opens on its agent (it needs you most): its first tab is the shell.
 - tapOn:
     id: space-row
@@ -19,6 +20,7 @@ name: worktree
 - waitForAnimationToEnd:
     timeout: 2000
 - pressKey: Back
+- runFlow: ../common/spaces.yaml
 - longPressOn:
     id: space-row
     index: 0
@@ -29,6 +31,7 @@ name: worktree
     visible: e2e-branch
     timeout: 30000
 - takeScreenshot: worktree
+- runFlow: ../common/spaces.yaml
 - longPressOn: e2e-branch
 - tapOn: Remove worktree
 - tapOn: Remove

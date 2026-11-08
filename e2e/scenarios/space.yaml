@@ -4,6 +4,7 @@ name: scenario space
 ---
 - launchApp:
     stopApp: false
+- runFlow: ../common/spaces.yaml
 - tapOn: New space
 - tapOn: Terminal
 - extendedWaitUntil:

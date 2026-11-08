@@ -17,6 +17,7 @@ env:
 - extendedWaitUntil:
     visible: connected
     timeout: 30000
+- runFlow: ../common/spaces.yaml
 - tapOn: New space
 - tapOn: Terminal
 - extendedWaitUntil:

@@ -3,6 +3,7 @@ appId: io.github.osc100.zagal.e2e
 name: spaces
 ---
 - launchApp
+- runFlow: ../common/spaces.yaml
 - longPressOn:
     id: space-row
     index: 0
@@ -16,6 +17,8 @@ name: spaces
     timeout: 10000
 - tapOn: New space
 - tapOn: Terminal
+# A phone opens the new space's terminal: back to the list.
+- runFlow: ../common/spaces.yaml
 - extendedWaitUntil:
     visible:
       id: space-row
