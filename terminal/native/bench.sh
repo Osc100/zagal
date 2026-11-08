@@ -31,9 +31,15 @@ fi
 build() { (cd "$1/terminal/native" && zig build bench --prefix "$2" >/dev/null); }
 build . "$PWD/$out/head"
 tree=$(mktemp -d)
-trap 'git worktree remove --force "$tree" >/dev/null 2>&1 || true' EXIT
+trap 'git -C terminal/ghostty worktree remove --force "$tree/terminal/ghostty" >/dev/null 2>&1 || true
+  git worktree remove --force "$tree" >/dev/null 2>&1 || true' EXIT
 git worktree add -q --detach "$tree" "$base"
-rmdir "$tree/terminal/ghostty" && ln -s "$PWD/terminal/ghostty" "$tree/terminal/ghostty"
+# The base builds against the ghostty it pins, which a bump of the submodule
+# changes: a worktree of our checkout at that commit (fetched if it's missing).
+pin=$(git rev-parse "$base:terminal/ghostty")
+git -C terminal/ghostty cat-file -e "$pin^{commit}" 2>/dev/null || git -C terminal/ghostty fetch -q --depth 1 origin "$pin"
+rmdir "$tree/terminal/ghostty"
+git -C terminal/ghostty worktree add -q --detach "$tree/terminal/ghostty" "$pin"
 build "$tree" "$PWD/$out/base"
 
 for mode in $modes; do

@@ -485,7 +485,7 @@ pub fn fillSnapshot(session: *Session, buf: []u8) !i32 {
             const style: vt.Style = if (cell.hasStyling()) styles[col] else .{};
             flags |= styleFlags(style);
 
-            const fg: ?vt.color.RGB = switch (style.fg_color) {
+            const fg: ?vt.color.RGB = switch (style.fg_color.value()) {
                 .none => null,
                 .palette => |idx| palette[idx],
                 .rgb => |rgb| rgb,
@@ -517,7 +517,7 @@ pub fn fillSnapshot(session: *Session, buf: []u8) !i32 {
             putU16(buf, record + 10, @intCast(units));
             putU16(buf, record + 12, flags);
             putU16(buf, record + 14, @intFromEnum(style.flags.underline));
-            const underline_color: ?vt.color.RGB = switch (style.underline_color) {
+            const underline_color: ?vt.color.RGB = switch (style.underline_color.value()) {
                 .none => null,
                 .palette => |idx| palette[idx],
                 .rgb => |rgb| rgb,
@@ -800,6 +800,32 @@ test "an overlined cell says so" {
     }.f;
     try std.testing.expect(flags(&buf, 0) & flag_overline != 0);
     try std.testing.expect(flags(&buf, 1) & flag_overline == 0);
+}
+
+test "a cell's text and underline colors, true color or the palette's" {
+    const session = try create(10, 3, 100);
+    defer destroy(session);
+    var buf: testBuffer(10, 3) align(4) = undefined;
+    // RGB text, palette text (196: the cube's red), default text, then
+    // underlines colored as RGB and from the palette (46: the cube's green).
+    session.stream.nextSlice("\x1b[38;2;1;2;3mA\x1b[38;5;196mB\x1b[0mC\x1b[4;58;2;9;8;7mU\x1b[58;5;46mV");
+    _ = try fillSnapshot(session, &buf);
+    const cells = header_bytes + row_header_bytes;
+    const at = struct {
+        fn i32At(b: []const u8, col: usize, field: usize) i32 {
+            return std.mem.readInt(i32, b[cells + col * cell_record_bytes + field ..][0..4], .little);
+        }
+        fn flags(b: []const u8, col: usize) u16 {
+            return std.mem.readInt(u16, b[cells + col * cell_record_bytes + 12 ..][0..2], .little);
+        }
+    };
+    try std.testing.expectEqual(argb(.{ .r = 1, .g = 2, .b = 3 }), at.i32At(&buf, 0, 0));
+    try std.testing.expectEqual(argb(.{ .r = 255, .g = 0, .b = 0 }), at.i32At(&buf, 1, 0));
+    try std.testing.expect(at.flags(&buf, 1) & flag_fg_default == 0);
+    try std.testing.expect(at.flags(&buf, 2) & flag_fg_default != 0);
+    try std.testing.expectEqual(0, at.i32At(&buf, 2, 16));
+    try std.testing.expectEqual(argb(.{ .r = 9, .g = 8, .b = 7 }), at.i32At(&buf, 3, 16));
+    try std.testing.expectEqual(argb(.{ .r = 0, .g = 255, .b = 0 }), at.i32At(&buf, 4, 16));
 }
 
 test "a theme without colors goes back to the built-in ones" {
