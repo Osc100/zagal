@@ -57,8 +57,8 @@ internal class GhosttyTerminalView(context: Context) : View(context) {
   var onInputBytes: ((ByteArray) -> Unit)? = null
   var onGridResize: ((cols: Int, rows: Int) -> Unit)? = null
 
-  /** A link Ctrl+tapped (OSC 8 or a written http(s) URL), for the host to open. */
-  var onLink: ((String) -> Unit)? = null
+  /** A link tapped (OSC 8 or a written http(s) URL), for the host to open; true when it did. */
+  var onLink: ((String) -> Boolean)? = null
 
   /** Draws only the background while true; see [TerminalView.held]. */
   var held = false
@@ -196,13 +196,6 @@ internal class GhosttyTerminalView(context: Context) : View(context) {
       override fun onDown(e: MotionEvent) = true
 
       override fun onSingleTapUp(e: MotionEvent): Boolean {
-        // Ctrl+tap (a keyboard's Ctrl, or the key bar's) opens the link under it;
-        // a long press offers it as "Open link".
-        val sticky = accessoryBar?.stickyMetaState() ?: 0
-        if ((e.metaState or sticky) and KeyEvent.META_CTRL_ON != 0 && openLinkAt(e.x, e.y)) {
-          if (sticky and KeyEvent.META_CTRL_ON != 0) accessoryBar?.consumeSticky()
-          return true
-        }
         if (scrolledBack) {
           val (cx, cy) = jumpChipCenter()
           val slop = JUMP_CHIP_RADIUS_DP * 1.5f * resources.displayMetrics.density
@@ -215,6 +208,10 @@ internal class GhosttyTerminalView(context: Context) : View(context) {
           clearSelection()
           return true
         }
+        // A tap on a link opens it, even where the program takes the mouse: a finger
+        // has no Ctrl to hold (a mouse does, and Ctrl+clicks, as on the desktop). A
+        // long press still selects, and offers it as "Open link".
+        if (openLinkAt(e.x, e.y)) return true
         // A program that takes the mouse (htop, lazygit, vim with mouse=a) gets the tap as a click.
         if (tracksMouse()) {
           sendMouse(MOUSE_PRESS, MOUSE_LEFT, e.x, e.y, e.metaState, anyPressed = true)
@@ -356,15 +353,14 @@ internal class GhosttyTerminalView(context: Context) : View(context) {
 
   // ── Session I/O ──
 
-  /** Hands the link under ([x], [y]) to [onLink]; false when there's none. */
+  /** Hands the link under ([x], [y]) to [onLink]; false when there's none, or the host didn't open it. */
   private fun openLinkAt(x: Float, y: Float): Boolean {
     if (cellWidth <= 0f || cellHeight <= 0) return false
     val col = (x / cellWidth).toInt()
     val row = (y / cellHeight).toInt()
     if (col !in 0 until cols || row !in 0 until rows) return false
     val link = linkAt(col, row) ?: return false
-    onLink?.invoke(link)
-    return true
+    return onLink?.invoke(link) == true
   }
 
   /** The link at a viewport cell, when the host takes links. */

@@ -58,17 +58,17 @@ class TerminalView(context: Context) : LinearLayout(context) {
     var onResize: ((cols: Int, rows: Int) -> Unit)? = null
 
     /**
-     * A link the user Ctrl+tapped (a keyboard's Ctrl, or the key bar's) or
-     * picked from the long-press toolbar's "Open link": an
-     * OSC 8 hyperlink's target as the program gave it, or an http(s) URL
-     * written in the terminal. Opening it is the host's call.
+     * A link the user tapped (with a mouse, Ctrl+clicked) or picked from the
+     * long-press toolbar's "Open link": an OSC 8 hyperlink's target as the
+     * program gave it, or an http(s) URL written in the terminal. Opening it
+     * is the host's call: true when it did, else the tap is the terminal's.
      */
-    var onLink: ((String) -> Unit)? = null
+    var onLink: ((String) -> Boolean)? = null
 
     private val terminal = GhosttyTerminalView(context).also { view ->
         view.onInputBytes = { bytes -> onInput?.invoke(bytes) }
         view.onGridResize = { cols, rows -> onResize?.invoke(cols, rows) }
-        view.onLink = { link -> onLink?.invoke(link) }
+        view.onLink = { link -> onLink?.invoke(link) == true }
     }
 
     private val accessoryBar = TerminalAccessoryBar(context).also { bar ->

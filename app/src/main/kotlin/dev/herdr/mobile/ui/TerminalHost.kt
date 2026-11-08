@@ -279,16 +279,18 @@ class TerminalHost(
     }
 
     /**
-     * A Ctrl+tapped link, in the browser. Only http(s): an OSC 8 target is
-     * whatever the program wrote, and other schemes (intent:, file:, app
-     * links) aren't for a terminal to open.
+     * A tapped link, in the browser; false when it isn't one to open. Only
+     * http(s): an OSC 8 target is whatever the program wrote, and other
+     * schemes (intent:, file:, app links) aren't for a terminal to open.
      */
-    private fun openLink(link: String) {
+    private fun openLink(link: String): Boolean {
         val uri = Uri.parse(link)
-        if (uri.scheme?.lowercase() !in setOf("http", "https") || uri.host.isNullOrEmpty()) return
-        try {
+        if (uri.scheme?.lowercase() !in setOf("http", "https") || uri.host.isNullOrEmpty()) return false
+        return try {
             context.startActivity(Intent(Intent.ACTION_VIEW, uri).addCategory(Intent.CATEGORY_BROWSABLE))
+            true
         } catch (_: ActivityNotFoundException) {
+            false
         }
     }
 
