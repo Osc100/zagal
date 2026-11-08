@@ -65,10 +65,18 @@ class TerminalView(context: Context) : LinearLayout(context) {
      */
     var onLink: ((String) -> Boolean)? = null
 
+    /**
+     * Images for the program, as content URIs: the keyboard's (a screenshot
+     * or copied image it offers) or the clipboard's, pasted. Sending them is
+     * the host's (then [paste] where they landed).
+     */
+    var onImages: ((List<android.net.Uri>) -> Unit)? = null
+
     private val terminal = GhosttyTerminalView(context).also { view ->
         view.onInputBytes = { bytes -> onInput?.invoke(bytes) }
         view.onGridResize = { cols, rows -> onResize?.invoke(cols, rows) }
         view.onLink = { link -> onLink?.invoke(link) == true }
+        view.onImages = { uris -> onImages?.invoke(uris) }
     }
 
     private val accessoryBar = TerminalAccessoryBar(context).also { bar ->
@@ -133,6 +141,9 @@ class TerminalView(context: Context) : LinearLayout(context) {
         val rootInsets = rootWindowInsets ?: return
         syncAccessoryBar(WindowInsetsCompat.toWindowInsetsCompat(rootInsets, this))
     }
+
+    /** Pastes `text` as the program takes pastes, without asking: the host's own (paths it put there). */
+    fun paste(text: String) = terminal.pasteText(text)
 
     /** A cell's size in pixels (width, height), for the host's display facts. */
     val cellPixels: Pair<Int, Int> get() = terminal.cellPixels

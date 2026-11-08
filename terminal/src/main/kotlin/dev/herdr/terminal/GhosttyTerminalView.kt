@@ -10,6 +10,7 @@ import android.graphics.Path
 import android.graphics.Rect
 import android.graphics.RenderNode
 import android.graphics.Typeface
+import android.net.Uri
 import android.os.SystemClock
 import android.provider.Settings
 import android.text.InputType
@@ -33,6 +34,11 @@ import android.view.inputmethod.InputConnection
 import android.view.inputmethod.InputMethodManager
 import android.widget.Magnifier
 import android.widget.OverScroller
+import androidx.core.view.ContentInfoCompat
+import androidx.core.view.OnReceiveContentListener
+import androidx.core.view.ViewCompat
+import androidx.core.view.inputmethod.EditorInfoCompat
+import androidx.core.view.inputmethod.InputConnectionCompat
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import kotlin.math.abs
@@ -59,6 +65,26 @@ internal class GhosttyTerminalView(context: Context) : View(context) {
 
   /** A link tapped (OSC 8 or a written http(s) URL), for the host to open; true when it did. */
   var onLink: ((String) -> Boolean)? = null
+
+  /**
+   * Images for the program: the keyboard's (a screenshot or copied image it
+   * offers, a sticker) or the clipboard's, pasted. Their content URIs, for
+   * the host to send; null takes none, and the keyboard offers none.
+   */
+  var onImages: ((List<Uri>) -> Unit)? = null
+    set(value) {
+      field = value
+      if (value == null) ViewCompat.setOnReceiveContentListener(this, null, null)
+      else ViewCompat.setOnReceiveContentListener(this, arrayOf("image/*"), imageReceiver)
+    }
+
+  // Images go to onImages; anything else (text) is left for the caller.
+  private val imageReceiver = OnReceiveContentListener { _, payload ->
+    if (!payload.clip.description.hasMimeType("image/*")) return@OnReceiveContentListener payload
+    val split = payload.partition { it.uri != null }
+    split.first?.clip?.let { clip -> onImages?.invoke((0 until clip.itemCount).mapNotNull { clip.getItemAt(it).uri }) }
+    split.second
+  }
 
   /** Draws only the background while true; see [TerminalView.held]. */
   var held = false
@@ -682,9 +708,24 @@ internal class GhosttyTerminalView(context: Context) : View(context) {
     return clip.getItemAt(0).coerceToText(context)?.toString()?.takeIf { it.isNotEmpty() }
   }
 
-  /** Paste the clipboard, confirming first when it could run commands. */
+  /** The clipboard, when it holds an image and the host takes images ([onImages]). */
+  private fun clipboardImage(): ClipData? {
+    if (onImages == null) return null
+    val clip = context.getSystemService(ClipboardManager::class.java)?.primaryClip ?: return null
+    return clip.takeIf { it.itemCount > 0 && it.description.hasMimeType("image/*") && it.getItemAt(0).uri != null }
+  }
+
+  /**
+   * Paste the clipboard, confirming first when it could run commands. An
+   * image goes to [onImages] (its text would only be its URI).
+   */
   fun requestPaste() {
     if (handle == 0L || finished) return
+    clipboardImage()?.let { clip ->
+      if (selectionMode) clearSelection() else actionMode?.finish()
+      ViewCompat.performReceiveContent(this, ContentInfoCompat.Builder(clip, ContentInfoCompat.SOURCE_CLIPBOARD).build())
+      return
+    }
     val text = clipboardText() ?: return
     val bytes = text.toByteArray(Charsets.UTF_8)
     if (GhosttyVt.isPasteSafe(bytes)) {
@@ -697,6 +738,12 @@ internal class GhosttyTerminalView(context: Context) : View(context) {
       .setPositiveButton("Paste") { _, _ -> sendPaste(bytes) }
       .setNegativeButton(android.R.string.cancel, null)
       .show()
+  }
+
+  /** Pastes text the host vouches for (a path it put there), as the program takes pastes. */
+  fun pasteText(text: String) {
+    if (handle == 0L || finished) return
+    sendPaste(text.toByteArray(Charsets.UTF_8))
   }
 
   private fun sendPaste(bytes: ByteArray) {
@@ -1251,7 +1298,11 @@ internal class GhosttyTerminalView(context: Context) : View(context) {
     outAttrs.imeOptions = EditorInfo.IME_ACTION_NONE or
       EditorInfo.IME_FLAG_NO_FULLSCREEN or
       EditorInfo.IME_FLAG_NO_EXTRACT_UI
-    return TerminalInputConnection()
+    val connection = TerminalInputConnection()
+    // The keyboard may offer images (its clipboard's, screenshots, stickers) when the host takes them.
+    val types = ViewCompat.getOnReceiveContentMimeTypes(this) ?: return connection
+    EditorInfoCompat.setContentMimeTypes(outAttrs, types)
+    return InputConnectionCompat.createWrapper(this, connection, outAttrs)
   }
 
   override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean {

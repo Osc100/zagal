@@ -3,6 +3,9 @@
 
 package dev.herdr.mobile.ui
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
@@ -145,7 +148,10 @@ fun TerminalScreen(
             expandedHeight = 44.dp,
         )
 
-        if (space != null) TabStrip(space, session, address, vm)
+        // The system's photo picker: no permission, only what's picked is shared.
+        val pick = rememberLauncherForActivityResult(ActivityResultContracts.PickMultipleVisualMedia()) { host.sendImages(address, it) }
+        val image = { pick.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) }
+        if (space != null) TabStrip(space, session, address, vm, onImage = image.takeIf { address.isNotEmpty() })
 
         // Lifted by exactly what the keyboard covers, so the terminal's key bar
         // sits right on top of it.
@@ -153,6 +159,7 @@ fun TerminalScreen(
             if (address.isNotEmpty()) {
                 val colors = herdr
                 val state by host.state.collectAsStateWithLifecycle()
+                val sending by host.sending.collectAsStateWithLifecycle()
                 Box(Modifier.fillMaxSize()) {
                     // A view per terminal: another tab's address makes (or reuses) its own.
                     key(address) {
@@ -162,7 +169,7 @@ fun TerminalScreen(
                             modifier = Modifier.fillMaxSize(),
                         )
                     }
-                    val label = when (val s = state) {
+                    val label = if (sending > 0) (if (sending == 1) "sending image…" else "sending $sending images…") else when (val s = state) {
                         PaneState.Live -> null
                         PaneState.Waiting -> "connecting…"
                         PaneState.Attaching -> "attaching…"
@@ -215,7 +222,7 @@ private fun Hosts(vm: TerminalViewModel) {
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun TabStrip(space: Space, session: Session, address: String, vm: TerminalViewModel) {
+private fun TabStrip(space: Space, session: Session, address: String, vm: TerminalViewModel, onImage: (() -> Unit)?) {
     var menu by rememberSaveable { mutableStateOf(false) }
     // The tab whose menu is open, and the one being renamed.
     var menuFor by remember { mutableStateOf<String?>(null) }
@@ -277,6 +284,8 @@ private fun TabStrip(space: Space, session: Session, address: String, vm: Termin
                     }
                 }
             }
+            // Beside +, on the phone and the tablet alike: images for the terminal's program.
+            onImage?.let { IconButton(it, Modifier.size(40.dp)) { Icon(Lucide.ImagePlus, "Send an image", Modifier.size(20.dp)) } }
             IconButton({ menu = true }, Modifier.size(40.dp)) { Icon(Lucide.Plus, "New tab") }
         }
         HorizontalDivider()

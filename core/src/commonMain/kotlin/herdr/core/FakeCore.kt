@@ -39,7 +39,7 @@ val FAKE_HELLO = Hello(
     framed = true,
     methods = listOf(
         "hello", "terminal.run", "terminal.list", "terminal.get", "terminal.kill",
-        "terminal.label", "terminal.keep", "terminal.attach", "doc.get", "doc.set",
+        "terminal.label", "terminal.keep", "terminal.attach", "terminal.put", "doc.get", "doc.set",
         "events.subscribe", "machine.list", "machine.exec", "templates.list",
     ),
     features = listOf("framed", "attach", "events", "status", "shell"),

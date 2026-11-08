@@ -18,12 +18,14 @@ import android.os.Looper
 import android.os.SystemClock
 import android.view.KeyEvent
 import android.view.ViewGroup
+import android.widget.Toast
 import androidx.core.content.res.ResourcesCompat
 import dev.herdr.mobile.R
 import dev.herdr.mobile.session.Prefs
 import dev.herdr.mobile.session.drawLigatures
 import dev.herdr.mobile.session.hostOf
 import dev.herdr.mobile.session.localOf
+import dev.herdr.mobile.session.readImage
 import dev.herdr.mobile.session.reason
 import dev.herdr.terminal.KeyBarMode
 import dev.herdr.terminal.KeyColors
@@ -34,8 +36,11 @@ import herdr.core.Attached
 import herdr.core.Client
 import herdr.core.Display
 import herdr.core.End
+import herdr.core.pasted
+import herdr.core.put
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.flow.Flow
@@ -45,10 +50,12 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 sealed interface PaneState {
     data object Waiting : PaneState
@@ -135,6 +142,7 @@ class TerminalHost(
             live.stream?.resize(cols, rows)
         }
         made.onLink = ::openLink
+        made.onImages = { sendImages(address, it) }
         live.job = scope.launch {
             var seen = false
             // Attach once there's a client and a size; a later resize (the keyboard,
@@ -291,6 +299,37 @@ class TerminalHost(
             true
         } catch (_: ActivityNotFoundException) {
             false
+        }
+    }
+
+    private val _sending = MutableStateFlow(0)
+
+    /** Images on their way to a terminal, to show while they go. */
+    val sending: StateFlow<Int> = _sending
+
+    /**
+     * Images for `address`'s program (picked, pasted, or the keyboard's):
+     * each copied beside it, on its machine, then where they landed pasted
+     * into it, as herdr-app pastes an image into a terminal elsewhere.
+     */
+    fun sendImages(address: String, uris: List<Uri>) {
+        if (uris.isEmpty()) return
+        scope.launch {
+            _sending.value += uris.size
+            try {
+                val c = client(hostOf(address)).first() ?: error("Not connected")
+                val paths = uris.map { uri ->
+                    val image = withContext(Dispatchers.IO) { readImage(context.contentResolver, uri) }
+                    put(c, localOf(address), image.name, image.bytes)
+                }
+                kept[address]?.view?.paste(pasted(paths))
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Toast.makeText(context, "Couldn't send the image: ${e.reason}", Toast.LENGTH_LONG).show()
+            } finally {
+                _sending.value -= uris.size
+            }
         }
     }
 

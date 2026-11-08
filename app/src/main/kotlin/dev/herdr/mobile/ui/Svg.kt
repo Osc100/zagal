@@ -107,4 +107,5 @@ object Lucide {
     val Plug @Composable get() = svgPainter("lucide/plug.svg")
     val Eye @Composable get() = svgPainter("lucide/eye.svg")
     val RefreshCw @Composable get() = svgPainter("lucide/refresh-cw.svg")
+    val ImagePlus @Composable get() = svgPainter("lucide/image-plus.svg")
 }
