@@ -1,0 +1,4 @@
+- Worktrees show under their repo's space, with branch and ahead/behind
+- Tap a link in the terminal to open it
+- Send photos and files to a terminal's program (up to 8 MB each)
+- Faster with colored output: ghostty's terminal core 1.0

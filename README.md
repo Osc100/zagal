@@ -31,10 +31,15 @@ to set up.
 
 - **Agents**: every agent on every machine, grouped by working, blocked,
   done and idle, with the titles herdr-app gives them.
-- **Spaces and tabs**: open, add and close them, as on the desktop.
+- **Spaces and tabs**: open, add and close them, as on the desktop. Git
+  worktrees show under their repo's space, with their branch and how far
+  they are from upstream.
 - **Terminal**: ghostty's VT core, with colors, mouse modes, scrollback,
-  selection, paste and Nerd Font icons. Leaving a terminal doesn't stop its
-  program.
+  selection, paste and Nerd Font icons. Tap a link to open it. Leaving a
+  terminal doesn't stop its program.
+- **Photos and files** for the program in a terminal, from Android's own
+  pickers: copied to its machine, their paths pasted, as the desktop
+  pastes an image.
 - **Notifications** when an agent finishes or needs you, with a preview of
   its screen.
 - **Several hosts at once**, merged into one view. Machines a host reaches

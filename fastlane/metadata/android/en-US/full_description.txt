@@ -2,8 +2,9 @@
 
 <ul>
 <li><b>Agents</b>: every agent on every machine, grouped by working, blocked, done and idle.</li>
-<li><b>Spaces and tabs</b>: open, add and close them, as on the desktop.</li>
-<li><b>Terminal</b> built on ghostty's VT core: colors, mouse modes, scrollback, selection, paste and Nerd Font icons.</li>
+<li><b>Spaces and tabs</b>: open, add and close them, as on the desktop. Git worktrees show under their repo.</li>
+<li><b>Terminal</b> built on ghostty's VT core: colors, mouse modes, scrollback, selection, paste and Nerd Font icons. Tap a link to open it.</li>
+<li><b>Photos and files</b> for the program in a terminal, sent to its machine.</li>
 <li><b>Notifications</b> when an agent finishes or needs you, with a preview of its screen.</li>
 <li><b>Several hosts at once</b>, merged into one view.</li>
 <li><b>Tablets</b> get a sidebar beside the terminal.</li>
