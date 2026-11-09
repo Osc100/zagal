@@ -27,6 +27,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
@@ -340,6 +341,9 @@ class Live(
     fun client(host: String): Flow<Client?> = links.flatMapLatest { it[host]?.client ?: flowOf(null) }
 
     fun clientNow(host: String): Client? = links.value[host]?.client?.value
+
+    /** Each host's client while it's connected, by host id: one (re)connecting is a new client. */
+    val clients: Flow<Map<String, Client?>> = perLink { it.client }.map { it.toMap() }.distinctUntilChanged()
 
     fun core(host: String): herdr.core.Session? = links.value[host]?.core
 
