@@ -1,0 +1,1 @@
+- Worktrees stay marked as worktrees when you come back to the app
